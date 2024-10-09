@@ -353,8 +353,14 @@ class State:
             team_preview=self.team_preview,
         )
 
+    def battle_is_over(self):
+        return self._into_rust_obj().battle_is_over()
+
     def to_string(self):
         return self._into_rust_obj().to_string()
+
+    def get_all_options(self):
+        return self._into_rust_obj().get_all_options()
 
     @classmethod
     def from_string(cls, state_str: str):

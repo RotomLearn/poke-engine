@@ -13,9 +13,9 @@ use poke_engine::items::Items;
 use poke_engine::mcts::{perform_mcts, MctsResult, MctsSideResult};
 use poke_engine::search::iterative_deepen_expectiminimax;
 use poke_engine::state::{
-    LastUsedMove, Move, MoveChoice, Pokemon, PokemonIndex, PokemonMoves, PokemonStatus,
-    PokemonType, PokemonVolatileStatus, Side, SideConditions, SidePokemon, State, StateTerrain,
-    StateTrickRoom, StateWeather, Terrain, Weather,
+    DamageDealt, LastUsedMove, Move, MoveChoice, Pokemon, PokemonIndex, PokemonMoves,
+    PokemonStatus, PokemonType, PokemonVolatileStatus, Side, SideConditions, SidePokemon, State,
+    StateTerrain, StateTrickRoom, StateWeather, Terrain, Weather,
 };
 use std::str::FromStr;
 use std::time::Duration;
@@ -28,6 +28,7 @@ pub struct PyState {
     pub state: State,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl PyState {
     #[new]
@@ -42,7 +43,7 @@ impl PyState {
         trick_room_turns_remaining: i8,
         team_preview: bool,
     ) -> Self {
-        PyState {
+        Self {
             state: State {
                 side_one: side_one.create_side(),
                 side_two: side_two.create_side(),
@@ -63,8 +64,41 @@ impl PyState {
         }
     }
 
+    #[allow(clippy::inherent_to_string)]
     fn to_string(&self) -> String {
         self.state.serialize()
+    }
+
+    fn battle_is_over(&self) -> f32 {
+        self.state.battle_is_over()
+    }
+
+    fn get_all_options(&self) -> (Vec<PyMoveChoice>, Vec<PyMoveChoice>) {
+        fn convert_move_choice(choice: MoveChoice, side: &Side) -> PyMoveChoice {
+            match choice {
+                MoveChoice::Move(m) => PyMoveChoice::Move(
+                    side.get_active_immutable().moves[m]
+                        .id
+                        .to_string()
+                        .to_lowercase(),
+                ),
+                MoveChoice::Switch(s) => PyMoveChoice::Switch(s.into()),
+                MoveChoice::None => PyMoveChoice::None(),
+            }
+        }
+
+        let (side1, side2) = self.state.get_all_options();
+
+        (
+            side1
+                .into_iter()
+                .map(|c| convert_move_choice(c, &self.state.side_one))
+                .collect::<Vec<PyMoveChoice>>(),
+            side2
+                .into_iter()
+                .map(|c| convert_move_choice(c, &self.state.side_two))
+                .collect::<Vec<PyMoveChoice>>(),
+        )
     }
 }
 
@@ -80,6 +114,7 @@ impl PySide {
     }
 }
 
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 #[pymethods]
 impl PySide {
     #[new]
@@ -114,7 +149,7 @@ impl PySide {
             pokemon.push(PyPokemon::create_fainted());
         }
 
-        PySide {
+        Self {
             side: Side {
                 active_index: PokemonIndex::deserialize(&active_index),
                 baton_passing,
@@ -141,7 +176,7 @@ impl PySide {
                 accuracy_boost,
                 evasion_boost,
                 last_used_move: LastUsedMove::deserialize(&last_used_move),
-                damage_dealt: Default::default(),
+                damage_dealt: DamageDealt::default(),
                 switch_out_move_second_saved_move: Choices::from_str(
                     &switch_out_move_second_saved_move,
                 )
@@ -163,10 +198,11 @@ impl PySideConditions {
     }
 }
 
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
 #[pymethods]
 impl PySideConditions {
     #[new]
-    fn new(
+    const fn new(
         spikes: i8,
         toxic_spikes: i8,
         stealth_rock: i8,
@@ -187,7 +223,7 @@ impl PySideConditions {
         toxic_count: i8,
         wide_guard: i8,
     ) -> Self {
-        PySideConditions {
+        Self {
             side_conditions: SideConditions {
                 spikes,
                 toxic_spikes,
@@ -223,13 +259,17 @@ impl PyPokemon {
     fn create_pokemon(&self) -> Pokemon {
         self.pokemon.clone()
     }
-    fn create_fainted() -> PyPokemon {
-        let mut pkmn = Pokemon::default();
-        pkmn.hp = 0;
-        PyPokemon { pokemon: pkmn }
+    fn create_fainted() -> Self {
+        Self {
+            pokemon: Pokemon {
+                hp: 0,
+                ..Default::default()
+            },
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pymethods]
 impl PyPokemon {
     #[new]
@@ -257,7 +297,7 @@ impl PyPokemon {
         for _ in 0..remaining_pkmn {
             moves.push(PyMove::create_empty_move());
         }
-        PyPokemon {
+        Self {
             pokemon: Pokemon {
                 id,
                 pokedex_num,
@@ -302,11 +342,14 @@ impl PyMove {
     fn create_move(&self) -> Move {
         self.mv.clone()
     }
-    fn create_empty_move() -> PyMove {
-        let mut mv = Move::default();
-        mv.disabled = true;
-        mv.pp = 0;
-        PyMove { mv }
+    fn create_empty_move() -> Self {
+        Self {
+            mv: Move {
+                disabled: true,
+                pp: 0,
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -315,7 +358,7 @@ impl PyMove {
     #[new]
     fn new(id: String, move_num: i16, pp: i8, disabled: bool) -> Self {
         let choice = Choices::from_str(&id).unwrap();
-        PyMove {
+        Self {
             mv: Move {
                 id: choice,
                 move_num,
@@ -323,6 +366,33 @@ impl PyMove {
                 pp,
                 choice: MOVES.get(&choice).unwrap().clone(),
             },
+        }
+    }
+}
+
+#[derive(Debug)]
+#[pyclass(name = "MoveChoice")]
+pub enum PyMoveChoice {
+    Move(String),
+    Switch(u8),
+    None(),
+}
+
+#[pymethods]
+impl PyMoveChoice {
+    fn __repr__(&self) -> String {
+        match self {
+            Self::Move(m) => format!("Move {m}"),
+            Self::Switch(s) => format!("Switch {s}"),
+            Self::None() => "None".to_string(),
+        }
+    }
+
+    fn __str__(&self) -> String {
+        match self {
+            Self::Move(m) => m.to_string(),
+            Self::Switch(s) => format!("switch {s}"),
+            Self::None() => "None".to_string(),
         }
     }
 }
@@ -337,7 +407,7 @@ struct PyMctsSideResult {
 
 impl PyMctsSideResult {
     fn from_mcts_side_result(result: MctsSideResult, side: &Side) -> Self {
-        PyMctsSideResult {
+        Self {
             move_choice: result.move_choice.to_string(side),
             total_score: result.total_score,
             visits: result.visits,
@@ -355,7 +425,7 @@ struct PyMctsResult {
 
 impl PyMctsResult {
     fn from_mcts_result(result: MctsResult, state: &State) -> Self {
-        PyMctsResult {
+        Self {
             s1: result
                 .s1
                 .iter()
@@ -432,13 +502,13 @@ struct PyStateInstructions {
 }
 
 impl PyStateInstructions {
-    fn from_state_instructions(instructions: StateInstructions) -> Self {
-        PyStateInstructions {
+    fn from_state_instructions(instructions: &StateInstructions) -> Self {
+        Self {
             percentage: instructions.percentage,
             instruction_list: instructions
                 .instruction_list
                 .iter()
-                .map(|i| format!("{:?}", i))
+                .map(|i| format!("{i:?}"))
                 .collect(),
         }
     }
@@ -455,8 +525,7 @@ fn gi(
         Some(m) => s1_move = m,
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid move for s1: {}",
-                side_one_move
+                "Invalid move for s1: {side_one_move}"
             )))
         }
     }
@@ -464,8 +533,7 @@ fn gi(
         Some(m) => s2_move = m,
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid move for s2: {}",
-                side_two_move
+                "Invalid move for s2: {side_two_move}"
             )))
         }
     }
@@ -473,7 +541,7 @@ fn gi(
         generate_instructions_from_move_pair(&mut py_state.state, &s1_move, &s2_move);
     let py_instructions = instructions
         .iter()
-        .map(|i| PyStateInstructions::from_state_instructions(i.clone()))
+        .map(PyStateInstructions::from_state_instructions)
         .collect();
 
     Ok(py_instructions)
@@ -491,8 +559,7 @@ fn calculate_damage(
         Some(m) => s1_choice = m.to_owned(),
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid move for s1: {}",
-                side_one_move
+                "Invalid move for s1: {side_one_move}"
             )))
         }
     }
@@ -500,8 +567,7 @@ fn calculate_damage(
         Some(m) => s2_choice = m.to_owned(),
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid move for s2: {}",
-                side_one_move
+                "Invalid move for s2: {side_one_move}"
             )))
         }
     }

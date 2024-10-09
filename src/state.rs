@@ -1,7 +1,10 @@
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+
 use crate::abilities::Abilities;
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
 use core::panic;
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::ops::{Index, IndexMut};
 
 use crate::instruction::{
@@ -73,7 +76,7 @@ impl MoveChoice {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
 pub enum PokemonStatus {
     None,
     Burn,
@@ -336,14 +339,15 @@ impl Default for SideConditions {
     }
 }
 
-#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, IntoPrimitive)]
+#[repr(u8)]
 pub enum PokemonMoveIndex {
-    M0,
-    M1,
-    M2,
-    M3,
-    M4,
-    M5,
+    M0 = 0,
+    M1 = 1,
+    M2 = 2,
+    M3 = 3,
+    M4 = 4,
+    M5 = 5,
 }
 
 #[derive(Debug, Clone)]
@@ -694,14 +698,15 @@ impl Default for Pokemon {
     }
 }
 
-#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, IntoPrimitive)]
+#[repr(u8)]
 pub enum PokemonIndex {
-    P0,
-    P1,
-    P2,
-    P3,
-    P4,
-    P5,
+    P0 = 0,
+    P1 = 1,
+    P2 = 2,
+    P3 = 3,
+    P4 = 4,
+    P5 = 5,
 }
 
 pub fn pokemon_index_iter() -> PokemonIndexIterator {

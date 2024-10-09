@@ -4,6 +4,7 @@ use pyo3::pyfunction;
 
 use crate::PyState;
 
+#[must_use]
 #[pyfunction]
 pub fn observations(py_state: &PyState) -> Vec<Vec<PyObject>> {
     let mut res = vec![vec![], vec![]];
@@ -31,7 +32,7 @@ pub fn observations(py_state: &PyState) -> Vec<Vec<PyObject>> {
 
             for p in &side.pokemon {
                 // 0 for pokemon on this side, 1 for pokemon on other side
-                res[side_num].push(i32::from(side_num == 1).to_object(py));
+                res[side_num].push((i / 2).to_object(py));
 
                 res[side_num].push(p.pokedex_num.to_object(py));
                 res[side_num].push((f32::from(p.hp) / f32::from(p.maxhp)).to_object(py));
