@@ -446,6 +446,7 @@ impl<'a> IntoIterator for &'a PokemonMoves {
 #[derive(Debug, Clone)]
 pub struct Move {
     pub id: Choices,
+    pub move_num: i16,
     pub disabled: bool,
     pub pp: i8,
     pub choice: Choice,
@@ -455,6 +456,7 @@ impl Default for Move {
     fn default() -> Move {
         Move {
             id: Choices::NONE,
+            move_num: 0,
             disabled: false,
             pp: 32,
             choice: Choice::default(),
@@ -465,6 +467,7 @@ impl Default for Move {
 #[derive(Debug, Clone)]
 pub struct Pokemon {
     pub id: String,
+    pub pokedex_num: i16,
     pub level: i8,
     pub types: (PokemonType, PokemonType),
     pub hp: i16,
@@ -663,6 +666,7 @@ impl Default for Pokemon {
     fn default() -> Pokemon {
         Pokemon {
             id: "rattata".to_string(),
+            pokedex_num: 19,
             level: 100,
             types: (PokemonType::Normal, PokemonType::Typeless),
             hp: 100,
@@ -839,6 +843,7 @@ impl IndexMut<PokemonIndex> for SidePokemon {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct Side {
     pub active_index: PokemonIndex,

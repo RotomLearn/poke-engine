@@ -24,12 +24,14 @@ class Move:
     """
 
     id: str = "none"
+    move_num: int = 0
     disabled: bool = False
     pp: int = 32
 
     def _into_rust_obj(self):
         return _Move(
             id=self.id,
+            move_num=self.move_num,
             disabled=self.disabled,
             pp=self.pp,
         )
@@ -76,6 +78,7 @@ class Pokemon:
     """
 
     id: str = ""
+    pokedex_num: int = 0
     level: int = 100
     types: (str, str) = ("normal", "typeless")
     hp: int = 100
@@ -99,6 +102,7 @@ class Pokemon:
 
         return _Pokemon(
             id=self.id,
+            pokedex_num=self.pokedex_num,
             level=self.level,
             types=self.types,
             hp=self.hp,

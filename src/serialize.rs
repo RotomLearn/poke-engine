@@ -18,6 +18,7 @@ impl Move {
         let split: Vec<&str> = serialized.split(";").collect();
         Move {
             id: Choices::from_str(split[0]).unwrap(),
+            move_num: 0,
             disabled: split[1].parse::<bool>().unwrap(),
             pp: split[2].parse::<i8>().unwrap(),
             choice: MOVES
@@ -212,6 +213,7 @@ impl Pokemon {
         let split: Vec<&str> = serialized.split(",").collect();
         Pokemon {
             id: split[0].to_string(),
+            pokedex_num: 0,
             level: split[1].parse::<i8>().unwrap(),
             types: (
                 PokemonType::deserialize(split[2]),

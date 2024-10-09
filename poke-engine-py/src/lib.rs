@@ -20,6 +20,8 @@ use poke_engine::state::{
 use std::str::FromStr;
 use std::time::Duration;
 
+pub mod pettingzoo;
+
 #[derive(Clone)]
 #[pyclass(name = "State")]
 pub struct PyState {
@@ -233,6 +235,7 @@ impl PyPokemon {
     #[new]
     fn new(
         id: String,
+        pokedex_num: i16,
         level: i8,
         types: [String; 2],
         hp: i16,
@@ -257,6 +260,7 @@ impl PyPokemon {
         PyPokemon {
             pokemon: Pokemon {
                 id,
+                pokedex_num,
                 level,
                 types: (
                     PokemonType::deserialize(&types[0]),
@@ -309,11 +313,12 @@ impl PyMove {
 #[pymethods]
 impl PyMove {
     #[new]
-    fn new(id: String, pp: i8, disabled: bool) -> Self {
+    fn new(id: String, move_num: i16, pp: i8, disabled: bool) -> Self {
         let choice = Choices::from_str(&id).unwrap();
         PyMove {
             mv: Move {
                 id: choice,
+                move_num,
                 disabled,
                 pp,
                 choice: MOVES.get(&choice).unwrap().clone(),
@@ -537,5 +542,7 @@ fn py_poke_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySideConditions>()?;
     m.add_class::<PyPokemon>()?;
     m.add_class::<PyMove>()?;
+
+    m.add_function(wrap_pyfunction!(pettingzoo::observations, m)?)?;
     Ok(())
 }

@@ -14,7 +14,19 @@ from ._poke_engine import (
     calculate_damage as _calculate_damage,
     mcts as _mcts,
     id as _id,
+    observations as _observations,
 )
+
+
+def observations(state: State) -> str:
+    """
+    Generate observations for the given state
+    :param state: the state to generate observations for
+    :type state: State
+    :return: the observations
+    :rtype: str
+    """
+    return _observations(state._into_rust_obj())
 
 
 @dataclass
@@ -199,4 +211,5 @@ __all__ = [
     "monte_carlo_tree_search",
     "iterative_deepening_expectiminimax",
     "calculate_damage",
+    "observations",
 ]
