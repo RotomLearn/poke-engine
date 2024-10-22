@@ -1,10 +1,9 @@
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::{FromPrimitive, IntoPrimitive};
 
 use crate::abilities::Abilities;
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
 use core::panic;
 use std::collections::HashSet;
-use std::convert::TryFrom;
 use std::ops::{Index, IndexMut};
 
 use crate::instruction::{
@@ -698,9 +697,10 @@ impl Default for Pokemon {
     }
 }
 
-#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, IntoPrimitive)]
+#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum PokemonIndex {
+    #[default]
     P0 = 0,
     P1 = 1,
     P2 = 2,
