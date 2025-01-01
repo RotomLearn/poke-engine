@@ -23,7 +23,7 @@ use std::cmp;
 
 define_enum_with_from_str! {
     #[repr(u16)]
-    #[derive(PartialEq, Debug, Clone)]
+    #[derive(PartialEq, Debug, Clone, Copy)]
     Abilities {
         NONE,
         ARMORTAIL,

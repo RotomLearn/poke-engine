@@ -3,6 +3,7 @@ use crate::evaluate::evaluate;
 use crate::generate_instructions::{
     calculate_both_damage_rolls, generate_instructions_from_move_pair,
 };
+use crate::inspect_state::inspect_state_and_observation;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
@@ -35,6 +36,15 @@ enum SubCommand {
     MonteCarloTreeSearch(MonteCarloTreeSearch),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
+    InspectStateAndObservation(InspectStateAndObservation),
+}
+
+#[derive(Parser)]
+struct InspectStateAndObservation {
+    #[clap(short, long, required = true)]
+    input_file: String,
+    #[clap(short, long, required = true)]
+    output_file: String,
 }
 
 #[derive(Parser)]
@@ -570,6 +580,13 @@ pub fn main() {
             exit(0);
         }
         Some(subcmd) => match subcmd {
+            SubCommand::InspectStateAndObservation(args) => {
+                let state_string =
+                    std::fs::read_to_string(&args.input_file).expect("Failed to read input file");
+                let state_string = state_string.trim();
+                inspect_state_and_observation(state_string, args.output_file.trim())
+                    .expect("Failed to write inspection file");
+            }
             SubCommand::Expectiminimax(expectiminimax) => {
                 state = State::deserialize(expectiminimax.state.as_str());
                 (side_one_options, side_two_options) = io_get_all_options(&state);

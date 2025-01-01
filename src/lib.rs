@@ -61,9 +61,11 @@ pub mod items;
 pub mod state;
 
 pub mod choices;
+pub mod inspect_state;
 pub mod instruction;
 pub mod io;
 pub mod mcts;
+pub mod observation;
 pub mod pokemon;
 pub mod search;
 
