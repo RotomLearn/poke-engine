@@ -8,21 +8,21 @@ use poke_engine::generate_instructions::{
 };
 use poke_engine::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
-    ChangeSideConditionInstruction, ChangeStatusInstruction, ChangeSubsituteHealthInstruction,
-    ChangeTerrain, ChangeType, ChangeWeather, ChangeWishInstruction, DamageInstruction,
-    DecrementFutureSightInstruction, DecrementPPInstruction, DecrementRestTurnsInstruction,
-    DecrementWishInstruction, DisableMoveInstruction, EnableMoveInstruction,
-    FormeChangeInstruction, HealInstruction, Instruction, RemoveVolatileStatusInstruction,
-    SetFutureSightInstruction, SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction,
-    StateInstructions, SwitchInstruction, ToggleBatonPassingInstruction,
-    ToggleTrickRoomInstruction,
+    ChangeSideConditionInstruction, ChangeStatInstruction, ChangeStatusInstruction,
+    ChangeSubsituteHealthInstruction, ChangeTerrain, ChangeType, ChangeWeather,
+    ChangeWishInstruction, DamageInstruction, DecrementFutureSightInstruction,
+    DecrementPPInstruction, DecrementRestTurnsInstruction, DecrementWishInstruction,
+    DisableMoveInstruction, EnableMoveInstruction, FormeChangeInstruction, HealInstruction,
+    Instruction, RemoveVolatileStatusInstruction, SetFutureSightInstruction,
+    SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction, StateInstructions,
+    SwitchInstruction, ToggleBatonPassingInstruction, ToggleTrickRoomInstruction,
 };
 use poke_engine::items::Items;
 use poke_engine::pokemon::PokemonName;
 use poke_engine::state::{
-    pokemon_index_iter, FormeChange, Move, MoveChoice, PokemonBoostableStat, PokemonIndex,
-    PokemonMoveIndex, PokemonSideCondition, PokemonStatus, PokemonType, PokemonVolatileStatus,
-    SideReference, State, StateWeather, Terrain, Weather,
+    pokemon_index_iter, Move, MoveChoice, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex,
+    PokemonSideCondition, PokemonStatus, PokemonType, PokemonVolatileStatus, SideReference, State,
+    StateWeather, Terrain, Weather,
 };
 
 #[cfg(feature = "terastallization")]
@@ -744,6 +744,78 @@ fn test_bellydrum() {
         Choices::SPLASH,
     );
 
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 50,
+            }),
+            Instruction::Boost(BoostInstruction {
+                side_ref: SideReference::SideOne,
+                stat: PokemonBoostableStat::Attack,
+                amount: 6,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_bellydrum_with_sitrus_berry_and_gluttony_at_even_amount_of_max_hp() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 100;
+    state.side_one.get_active().maxhp = 100;
+    state.side_one.get_active().ability = Abilities::GLUTTONY;
+    state.side_one.get_active().item = Items::SITRUSBERRY;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::BELLYDRUM,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 50,
+            }),
+            Instruction::Boost(BoostInstruction {
+                side_ref: SideReference::SideOne,
+                stat: PokemonBoostableStat::Attack,
+                amount: 6,
+            }),
+            Instruction::Heal(HealInstruction {
+                side_ref: SideReference::SideOne,
+                heal_amount: 25,
+            }),
+            Instruction::ChangeItem(ChangeItemInstruction {
+                side_ref: SideReference::SideOne,
+                current_item: Items::SITRUSBERRY,
+                new_item: Items::NONE,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_bellydrum_with_sitrus_berry_and_gluttony_at_odd_amount_of_max_hp() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 101;
+    state.side_one.get_active().maxhp = 101;
+    state.side_one.get_active().ability = Abilities::GLUTTONY;
+    state.side_one.get_active().item = Items::SITRUSBERRY;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::BELLYDRUM,
+        Choices::SPLASH,
+    );
+
+    // Berry should not activate
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![
@@ -2913,6 +2985,393 @@ fn test_using_substitute_when_it_is_already_up() {
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_schooling_when_falling_below_25_percent() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 60;
+    state.side_one.get_active().ability = Abilities::SCHOOLING;
+    state.side_one.get_active().id = PokemonName::WISHIWASHISCHOOL;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::TACKLE,
+    );
+
+    // This pokemon starts at 100 stats all over,
+    // so the change-X instructions are relative to that
+    // lv. 100 wishiwashi neutral nature with 85 evs in all stats has the final stats:
+    // 252/97/97/107/107/137, however HP does not change
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 48,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::WISHIWASHI,
+                previous_forme: PokemonName::WISHIWASHISCHOOL,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: -3,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: -3,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 7,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 7,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 37,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_schooling_when_falling_going_above_25_percent() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 20;
+    state.side_one.get_active().ability = Abilities::SCHOOLING;
+    state.side_one.get_active().id = PokemonName::WISHIWASHI;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::RECOVER,
+        Choices::SPLASH,
+    );
+
+    // This pokemon starts at 100 stats all over,
+    // so the change-X instructions are relative to that
+    // lv. 100 wishiwashi-school neutral nature with 85 evs in all stats has the final stats:
+    // 252/337/317/337/327/117, however HP does not change
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Heal(HealInstruction {
+                side_ref: SideReference::SideOne,
+                heal_amount: 50,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::WISHIWASHISCHOOL,
+                previous_forme: PokemonName::WISHIWASHI,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 237,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 217,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 237,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 227,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 17,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_minior_formechange() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 60;
+    state.side_one.get_active().ability = Abilities::SHIELDSDOWN;
+    state.side_one.get_active().id = PokemonName::MINIORMETEOR;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::TACKLE,
+    );
+
+    // This pokemon starts at 100 stats all over,
+    // so the change-X instructions are relative to that
+    // lv. 100 minior-core neutral nature with 85 evs in all stats has the final stats:
+    // 282/257/177/257/177/297, however HP does not change
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 48,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::MINIOR,
+                previous_forme: PokemonName::MINIORMETEOR,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 157,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 77,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 157,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 77,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 197,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_palafin_formechange_on_switchout() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::PALAFIN;
+    state.side_one.get_active().ability = Abilities::ZEROTOHERO;
+
+    let side_one_move = MoveChoice::Switch(PokemonIndex::P1);
+    let side_two_move = MoveChoice::None;
+    let vec_of_instructions =
+        generate_instructions_with_state_assertion(&mut state, &side_one_move, &side_two_move);
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::PALAFINHERO,
+                previous_forme: PokemonName::PALAFIN,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 277,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 151,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 169,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 131,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 157,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_morpeko_reverts_to_fullbelly_when_switching_out() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::MORPEKOHANGRY;
+    state.side_one.get_active().ability = Abilities::HUNGERSWITCH;
+
+    let side_one_move = MoveChoice::Switch(PokemonIndex::P1);
+    let side_two_move = MoveChoice::None;
+    let vec_of_instructions =
+        generate_instructions_with_state_assertion(&mut state, &side_one_move, &side_two_move);
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::MORPEKO,
+                previous_forme: PokemonName::MORPEKOHANGRY,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_morpeko_does_not_change_forme_when_switching_out_if_already_full_belly() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::MORPEKO;
+    state.side_one.get_active().ability = Abilities::HUNGERSWITCH;
+
+    let side_one_move = MoveChoice::Switch(PokemonIndex::P1);
+    let side_two_move = MoveChoice::None;
+    let vec_of_instructions =
+        generate_instructions_with_state_assertion(&mut state, &side_one_move, &side_two_move);
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Switch(SwitchInstruction {
+            side_ref: SideReference::SideOne,
+            previous_index: PokemonIndex::P0,
+            next_index: PokemonIndex::P1,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_morpeko_formechange_end_of_turn() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::MORPEKO;
+    state.side_one.get_active().ability = Abilities::HUNGERSWITCH;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::FormeChange(FormeChangeInstruction {
+            side_ref: SideReference::SideOne,
+            new_forme: PokemonName::MORPEKOHANGRY,
+            previous_forme: PokemonName::MORPEKO,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_hungerswitch_does_not_activate_when_teratsallized() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::MORPEKO;
+    state.side_one.get_active().terastallized = true;
+    state.side_one.get_active().ability = Abilities::HUNGERSWITCH;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_morpekohangry_formechange_end_of_turn() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::MORPEKOHANGRY;
+    state.side_one.get_active().ability = Abilities::HUNGERSWITCH;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::FormeChange(FormeChangeInstruction {
+            side_ref: SideReference::SideOne,
+            new_forme: PokemonName::MORPEKO,
+            previous_forme: PokemonName::MORPEKOHANGRY,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_minior_meteor_formechange_when_healing() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 40;
+    state.side_one.get_active().ability = Abilities::SHIELDSDOWN;
+    state.side_one.get_active().id = PokemonName::MINIOR;
+    state.side_one.get_active().attack = 200;
+    state.side_one.get_active().defense = 200;
+    state.side_one.get_active().special_attack = 200;
+    state.side_one.get_active().special_defense = 200;
+    state.side_one.get_active().speed = 200;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::RECOVER,
+        Choices::SPLASH,
+    );
+
+    // This pokemon starts at 100 stats all over,
+    // so the change-X instructions are relative to that
+    // lv. 100 minior-meteor neutral nature with 85 evs in all stats has the final stats:
+    // 282/257/177/257/177/297, however HP does not change
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Heal(HealInstruction {
+                side_ref: SideReference::SideOne,
+                heal_amount: 50,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::MINIORMETEOR,
+                previous_forme: PokemonName::MINIOR,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: -23,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: -23,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: -23,
+            }),
+        ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -10068,6 +10527,179 @@ fn test_identical_items_generates_no_instructions() {
 }
 
 #[test]
+fn test_iceface_eiscue_taking_physical_hit() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::EISCUE;
+    state.side_one.get_active().ability = Abilities::ICEFACE;
+    state.side_one.get_active().attack = 217;
+    state.side_one.get_active().special_attack = 187;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::TACKLE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::EISCUENOICE,
+                previous_forme: PokemonName::EISCUE,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 97,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 217,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_eiscuenoice_switching_into_snow() {
+    let mut state = State::default();
+    state.side_two.get_active().types.0 = PokemonType::ICE;
+    state.side_one.pokemon[PokemonIndex::P1].types.0 = PokemonType::ICE;
+    state.side_one.pokemon[PokemonIndex::P1].id = PokemonName::EISCUENOICE;
+    state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::ICEFACE;
+    state.weather.weather_type = Weather::SNOW;
+    state.weather.turns_remaining = 5;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::EISCUE,
+                previous_forme: PokemonName::EISCUENOICE,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 117,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 177,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 87,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 137,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::DecrementWeatherTurnsRemaining,
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_eiscuenoice_switching_into_hail() {
+    let mut state = State::default();
+    state.side_two.get_active().types.0 = PokemonType::ICE;
+    state.side_one.pokemon[PokemonIndex::P1].types.0 = PokemonType::ICE;
+    state.side_one.pokemon[PokemonIndex::P1].id = PokemonName::EISCUENOICE;
+    state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::ICEFACE;
+    state.weather.weather_type = Weather::HAIL;
+    state.weather.turns_remaining = 5;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::EISCUE,
+                previous_forme: PokemonName::EISCUENOICE,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 117,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 177,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 87,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 137,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::DecrementWeatherTurnsRemaining,
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_eiscue_taking_special_hit() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::EISCUE;
+    state.side_one.get_active().ability = Abilities::ICEFACE;
+    state.side_one.get_active().attack = 217;
+    state.side_one.get_active().special_attack = 187;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::WATERGUN,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideOne,
+            damage_amount: 32,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_mimikyu_with_disguise_formechange_on_damaging_move() {
     let mut state = State::default();
     state.side_one.get_active().id = PokemonName::MIMIKYU;
@@ -10083,7 +10715,8 @@ fn test_mimikyu_with_disguise_formechange_on_damaging_move() {
         percentage: 100.0,
         instruction_list: vec![Instruction::FormeChange(FormeChangeInstruction {
             side_ref: SideReference::SideOne,
-            forme_change: FormeChange::MimikyuBusted,
+            new_forme: PokemonName::MIMIKYUBUSTED,
+            previous_forme: PokemonName::MIMIKYU,
         })],
     }];
 
@@ -10117,7 +10750,8 @@ fn test_mimikyu_busting_does_not_overkill() {
         percentage: 100.0,
         instruction_list: vec![Instruction::FormeChange(FormeChangeInstruction {
             side_ref: SideReference::SideOne,
-            forme_change: FormeChange::MimikyuBusted,
+            new_forme: PokemonName::MIMIKYUBUSTED,
+            previous_forme: PokemonName::MIMIKYU,
         })],
     }];
 

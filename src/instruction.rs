@@ -1,8 +1,9 @@
 use crate::choices::{Choices, MoveCategory};
 use crate::items::Items;
+use crate::pokemon::PokemonName;
+use crate::state::SideReference;
 use crate::state::Terrain;
 use crate::state::Weather;
-use crate::state::{FormeChange, SideReference};
 use crate::state::{LastUsedMove, PokemonVolatileStatus};
 use crate::state::{PokemonBoostableStat, PokemonType};
 use crate::state::{PokemonIndex, PokemonSideCondition};
@@ -58,6 +59,11 @@ pub enum Instruction {
     DecrementTerrainTurnsRemaining,
     ChangeType(ChangeType),
     ChangeItem(ChangeItemInstruction),
+    ChangeAttack(ChangeStatInstruction),
+    ChangeDefense(ChangeStatInstruction),
+    ChangeSpecialAttack(ChangeStatInstruction),
+    ChangeSpecialDefense(ChangeStatInstruction),
+    ChangeSpeed(ChangeStatInstruction),
     DisableMove(DisableMoveInstruction),
     EnableMove(EnableMoveInstruction),
     ChangeWish(ChangeWishInstruction),
@@ -171,6 +177,21 @@ impl fmt::Debug for Instruction {
                     c.side_ref, c.current_item, c.new_item
                 )
             }
+            Instruction::ChangeAttack(c) => {
+                write!(f, "ChangeAttack {:?}: {}", c.side_ref, c.amount)
+            }
+            Instruction::ChangeDefense(c) => {
+                write!(f, "ChangeDefense {:?}: {}", c.side_ref, c.amount)
+            }
+            Instruction::ChangeSpecialAttack(c) => {
+                write!(f, "ChangeSpecialAttack {:?}: {}", c.side_ref, c.amount)
+            }
+            Instruction::ChangeSpecialDefense(c) => {
+                write!(f, "ChangeSpecialDefense {:?}: {}", c.side_ref, c.amount)
+            }
+            Instruction::ChangeSpeed(c) => {
+                write!(f, "ChangeSpeed {:?}: {}", c.side_ref, c.amount)
+            }
             Instruction::DisableMove(d) => {
                 write!(f, "DisableMove {:?}: {:?}", d.side_ref, d.move_index)
             }
@@ -225,7 +246,7 @@ impl fmt::Debug for Instruction {
                 )
             }
             Instruction::FormeChange(s) => {
-                write!(f, "FormeChange {:?}: {:?}", s.side_ref, s.forme_change)
+                write!(f, "FormeChange {:?}: {:?}", s.side_ref, s.new_forme)
             }
             Instruction::SetSideOneMoveSecondSwitchOutMove(s) => {
                 write!(
@@ -401,6 +422,12 @@ pub struct ChangeItemInstruction {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ChangeStatInstruction {
+    pub side_ref: SideReference,
+    pub amount: i16,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct HealInstruction {
     pub side_ref: SideReference,
     pub heal_amount: i16,
@@ -421,7 +448,8 @@ pub struct ChangeSubsituteHealthInstruction {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FormeChangeInstruction {
     pub side_ref: SideReference,
-    pub forme_change: FormeChange,
+    pub new_forme: PokemonName,
+    pub previous_forme: PokemonName,
 }
 
 #[derive(Debug, PartialEq, Clone)]
