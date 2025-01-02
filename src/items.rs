@@ -14,6 +14,9 @@ use crate::state::{PokemonBoostableStat, State, Terrain};
 use crate::state::{PokemonStatus, SideReference};
 use std::cmp;
 
+#[cfg(feature = "gen4")]
+use crate::state::PokemonVolatileStatus;
+
 define_enum_with_from_str! {
     #[repr(u8)]
     #[derive(Debug, PartialEq, Clone, Copy)]
@@ -626,26 +629,26 @@ pub fn item_before_move(
         }
         Items::SITRUSBERRY
             if active_pkmn.ability == Abilities::GLUTTONY
-                && active_pkmn.hp < active_pkmn.maxhp / 2 =>
+                && active_pkmn.hp <= active_pkmn.maxhp / 2 =>
         {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
-        Items::SITRUSBERRY if active_pkmn.hp < active_pkmn.maxhp / 4 => {
+        Items::SITRUSBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
-        Items::PETAYABERRY if active_pkmn.hp < active_pkmn.maxhp / 4 => boost_berry(
+        Items::PETAYABERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
             side_ref,
             attacking_side,
             PokemonBoostableStat::SpecialAttack,
             instructions,
         ),
-        Items::LIECHIBERRY if active_pkmn.hp < active_pkmn.maxhp / 4 => boost_berry(
+        Items::LIECHIBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
             side_ref,
             attacking_side,
             PokemonBoostableStat::Attack,
             instructions,
         ),
-        Items::SALACBERRY if active_pkmn.hp < active_pkmn.maxhp / 4 => boost_berry(
+        Items::SALACBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
             side_ref,
             attacking_side,
             PokemonBoostableStat::Speed,
@@ -788,7 +791,7 @@ pub fn item_end_of_turn(
         Items::LUMBERRY if active_pkmn.status != PokemonStatus::NONE => {
             lum_berry(side_ref, attacking_side, instructions)
         }
-        Items::SITRUSBERRY if active_pkmn.hp < active_pkmn.maxhp / 2 => {
+        Items::SITRUSBERRY if active_pkmn.hp <= active_pkmn.maxhp / 2 => {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
         Items::BLACKSLUDGE => {
@@ -1106,6 +1109,21 @@ pub fn item_modify_attack_being_used(
         Items::LIFEORB => {
             if attacking_choice.category != MoveCategory::Status {
                 attacking_choice.base_power *= 1.3;
+
+                #[cfg(feature = "gen4")]
+                if !defending_side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::SUBSTITUTE)
+                    && attacking_side.get_active_immutable().ability != Abilities::MAGICGUARD
+                {
+                    attacking_choice.add_or_create_secondaries(Secondary {
+                        chance: 100.0,
+                        effect: Effect::Heal(-0.1),
+                        target: MoveTarget::User,
+                    });
+                }
+
+                #[cfg(not(feature = "gen4"))]
                 if attacking_side.get_active_immutable().ability != Abilities::MAGICGUARD {
                     attacking_choice.add_or_create_secondaries(Secondary {
                         chance: 100.0,

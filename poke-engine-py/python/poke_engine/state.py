@@ -52,6 +52,10 @@ class Pokemon:
     :type ability: str
     :param item: The item held by the Pokemon
     :type item: str
+    :param nature: The nature of the Pokemon
+    :type nature: str
+    :param evs: The evs of the Pokemon
+    :type evs: tuple[int, int, int, int, int, int]
     :param attack: The attack stat of the Pokemon
     :type attack: int
     :param defense: The defense stat of the Pokemon
@@ -85,6 +89,8 @@ class Pokemon:
     maxhp: int = 100
     ability: str = "none"
     item: str = "none"
+    nature: str = "serious"
+    evs: tuple[int, int, int, int, int, int] = (85, 85, 85, 85, 85, 85)
     attack: int = 100
     defense: int = 100
     special_attack: int = 100
@@ -110,6 +116,8 @@ class Pokemon:
             maxhp=self.maxhp,
             ability=self.ability,
             item=self.item,
+            nature=self.nature,
+            evs=self.evs,
             attack=self.attack,
             defense=self.defense,
             special_attack=self.special_attack,

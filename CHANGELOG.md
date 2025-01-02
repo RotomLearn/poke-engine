@@ -1,5 +1,37 @@
 # Changelog
 
+## [v0.0.25](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.25) - 2024-12-31
+
+### Features
+
+- Morpeko / MorpekoHangry forme changes - ([263260e](https://github.com/pmariglia/poke-engine/commit/263260e64d3b121300878e627a9be5581740eced))
+
+- Wishiwashi forme change - ([4295ef8](https://github.com/pmariglia/poke-engine/commit/4295ef824c5182f81168f6446a9a17858d0a4355))
+
+- Palafin-hero formechange on switchout - ([518b96e](https://github.com/pmariglia/poke-engine/commit/518b96e19d89c164cd3d106227396cd09335aaf6))
+
+- Eiscue iceface formechange when getting hit and when switching into snow/hail - ([03fdb03](https://github.com/pmariglia/poke-engine/commit/03fdb039f3f5f9d6aee512c363f2db8b5617afbe))
+
+
+### Bug Fixes
+
+- Refactor forme change instructions to use PokemonName rather than a formechange enum - ([f1f2f0a](https://github.com/pmariglia/poke-engine/commit/f1f2f0acbcb9c79147e64c5d1c1567eac1522b5e))
+
+- Mimikyu busting is conditional on pkmn id being equal to mimikyu - ([3c13510](https://github.com/pmariglia/poke-engine/commit/3c13510ce487b6142bafa89bfab477cb462caf7c))
+
+## [v0.0.24](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.24) - 2024-12-29
+
+### Features
+
+- [**breaking**] ChangeStat Instructions, Natures & EVs, Minior/MiniorMeteor FormeChange - ([6330453](https://github.com/pmariglia/poke-engine/commit/6330453d04c71f0540f23b92d1cd9907d22b9fbc))
+
+
+### Bug Fixes
+
+- Less-than-or-equal for activating berries based on HP - ([8f36e81](https://github.com/pmariglia/poke-engine/commit/8f36e81428b99ee54dfa433c138b4b07595d3165))
+
+- Formatting - ([5c13f9c](https://github.com/pmariglia/poke-engine/commit/5c13f9c7d031c4a17aa59391bf54757a535dbf8a))
+
 ## [v0.0.23](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.23) - 2024-12-28
 
 ### Features

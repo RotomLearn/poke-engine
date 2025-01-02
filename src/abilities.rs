@@ -14,9 +14,7 @@ use crate::instruction::{
 };
 use crate::items::{get_choice_move_disable_instructions, Items};
 use crate::pokemon::PokemonName;
-use crate::state::{
-    FormeChange, PokemonBoostableStat, PokemonSideCondition, PokemonType, Side, Terrain,
-};
+use crate::state::{PokemonBoostableStat, PokemonSideCondition, PokemonType, Side, Terrain};
 use crate::state::{PokemonStatus, State};
 use crate::state::{PokemonVolatileStatus, SideReference, Weather};
 use std::cmp;
@@ -511,37 +509,56 @@ pub fn ability_before_move(
         Abilities::NEUTRALIZINGGAS => {
             return;
         }
-
+        // Incomplete: IceFace should not stop secondaries, but setting base_power to 0 makes
+        // secondaries not apply in this engine
+        Abilities::ICEFACE => {
+            if defending_pkmn.id == PokemonName::EISCUE && choice.category == MoveCategory::Physical
+            {
+                choice.base_power = 0.0;
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: side_ref.get_other_side(),
+                        previous_forme: defending_pkmn.id,
+                        new_forme: PokemonName::EISCUENOICE,
+                    },
+                ));
+                defending_pkmn.id = PokemonName::EISCUENOICE;
+                defending_pkmn.recalculate_stats(&side_ref.get_other_side(), instructions);
+            }
+        }
         // Technically incorrect
         // A move missing should not trigger this formechange
         #[cfg(not(any(feature = "gen8", feature = "gen9")))]
         Abilities::DISGUISE
             if (choice.category == MoveCategory::Physical
                 || choice.category == MoveCategory::Special)
-                && (defending_pkmn.id != PokemonName::MIMIKYUBUSTED
-                    && defending_pkmn.id != PokemonName::MIMIKYUBUSTEDTOTEM) =>
+                && (defending_pkmn.id == PokemonName::MIMIKYU
+                    || defending_pkmn.id == PokemonName::MIMIKYUTOTEM) =>
         {
             choice.base_power = 0.0;
             instructions
                 .instruction_list
                 .push(Instruction::FormeChange(FormeChangeInstruction {
                     side_ref: side_ref.get_other_side(),
-                    forme_change: FormeChange::MimikyuBusted,
+                    previous_forme: defending_pkmn.id,
+                    new_forme: PokemonName::MIMIKYUBUSTED,
                 }));
+            defending_pkmn.id = PokemonName::MIMIKYUBUSTED;
         }
         #[cfg(any(feature = "gen8", feature = "gen9"))]
         Abilities::DISGUISE
             if (choice.category == MoveCategory::Physical
                 || choice.category == MoveCategory::Special)
-                && (defending_pkmn.id != PokemonName::MIMIKYUBUSTED
-                    && defending_pkmn.id != PokemonName::MIMIKYUBUSTEDTOTEM) =>
+                && (defending_pkmn.id == PokemonName::MIMIKYU
+                    || defending_pkmn.id == PokemonName::MIMIKYUTOTEM) =>
         {
             choice.base_power = 0.0;
             instructions
                 .instruction_list
                 .push(Instruction::FormeChange(FormeChangeInstruction {
                     side_ref: side_ref.get_other_side(),
-                    forme_change: FormeChange::MimikyuBusted,
+                    previous_forme: defending_pkmn.id,
+                    new_forme: PokemonName::MIMIKYUBUSTED,
                 }));
             defending_pkmn.id = PokemonName::MIMIKYUBUSTED;
             let dmg = cmp::min(defending_pkmn.hp, defending_pkmn.maxhp / 8);
@@ -896,6 +913,31 @@ pub fn ability_on_switch_out(
         return;
     }
     match active_pkmn.ability {
+        Abilities::ZEROTOHERO => {
+            if active_pkmn.id == PokemonName::PALAFIN {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::PALAFINHERO,
+                        previous_forme: PokemonName::PALAFIN,
+                    },
+                ));
+                active_pkmn.id = PokemonName::PALAFINHERO;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+        }
+        Abilities::HUNGERSWITCH => {
+            if active_pkmn.id == PokemonName::MORPEKOHANGRY && !active_pkmn.terastallized {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::MORPEKO,
+                        previous_forme: PokemonName::MORPEKOHANGRY,
+                    },
+                ));
+                active_pkmn.id = PokemonName::MORPEKO;
+            }
+        }
         Abilities::NATURALCURE => {
             if active_pkmn.status != PokemonStatus::NONE {
                 let status = active_pkmn.status.clone();
@@ -938,6 +980,80 @@ pub fn ability_end_of_turn(
         return;
     }
     match active_pkmn.ability {
+        Abilities::HUNGERSWITCH => {
+            if active_pkmn.id == PokemonName::MORPEKO && !active_pkmn.terastallized {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::MORPEKOHANGRY,
+                        previous_forme: PokemonName::MORPEKO,
+                    },
+                ));
+                active_pkmn.id = PokemonName::MORPEKOHANGRY;
+            } else if active_pkmn.id == PokemonName::MORPEKOHANGRY && !active_pkmn.terastallized {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::MORPEKO,
+                        previous_forme: PokemonName::MORPEKOHANGRY,
+                    },
+                ));
+                active_pkmn.id = PokemonName::MORPEKO;
+            }
+        }
+        Abilities::SHIELDSDOWN => {
+            if active_pkmn.hp <= active_pkmn.maxhp / 2
+                && active_pkmn.id == PokemonName::MINIORMETEOR
+            {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::MINIOR,
+                        previous_forme: active_pkmn.id,
+                    },
+                ));
+                active_pkmn.id = PokemonName::MINIOR;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+            if active_pkmn.hp > active_pkmn.maxhp / 2 && active_pkmn.id != PokemonName::MINIORMETEOR
+            {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::MINIORMETEOR,
+                        previous_forme: active_pkmn.id,
+                    },
+                ));
+                active_pkmn.id = PokemonName::MINIORMETEOR;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+        }
+        Abilities::SCHOOLING => {
+            if active_pkmn.hp <= active_pkmn.maxhp / 4
+                && active_pkmn.id == PokemonName::WISHIWASHISCHOOL
+            {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::WISHIWASHI,
+                        previous_forme: active_pkmn.id,
+                    },
+                ));
+                active_pkmn.id = PokemonName::WISHIWASHI;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+            if active_pkmn.hp > active_pkmn.maxhp / 4 && active_pkmn.id == PokemonName::WISHIWASHI {
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        new_forme: PokemonName::WISHIWASHISCHOOL,
+                        previous_forme: active_pkmn.id,
+                    },
+                ));
+                active_pkmn.id = PokemonName::WISHIWASHISCHOOL;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+        }
         Abilities::BADDREAMS => {
             let defender = defending_side.get_active();
             if defender.status == PokemonStatus::SLEEP {
@@ -1091,6 +1207,22 @@ pub fn ability_on_switch_in(
         return;
     }
     match active_pkmn.ability {
+        Abilities::ICEFACE => {
+            if active_pkmn.id == PokemonName::EISCUENOICE && state.weather_is_active(&Weather::HAIL)
+                || state.weather_is_active(&Weather::SNOW)
+            {
+                let active_pkmn = state.get_side(side_ref).get_active();
+                instructions.instruction_list.push(Instruction::FormeChange(
+                    FormeChangeInstruction {
+                        side_ref: *side_ref,
+                        previous_forme: active_pkmn.id,
+                        new_forme: PokemonName::EISCUE,
+                    },
+                ));
+                active_pkmn.id = PokemonName::EISCUE;
+                active_pkmn.recalculate_stats(side_ref, instructions);
+            }
+        }
         Abilities::PROTOSYNTHESIS => {
             let sun_is_active = state.weather_is_active(&Weather::SUN);
             let attacking_side = state.get_side(side_ref);

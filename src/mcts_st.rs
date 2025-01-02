@@ -715,6 +715,56 @@ fn sample_instruction(instructions: &[StateInstructions]) -> &StateInstructions 
     })
 }
 
+// fn custom_eval(&mut self, state: &mut State) -> f32 {
+//     let eval = evaluate(state);
+
+//     let recovery_penalty = {
+//         let mut penalty = 0.0;
+
+//         let has_s1_heal = self.instructions.instruction_list.iter()
+//             .any(|instruction| matches!(instruction,
+//                 Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideOne
+//             ));
+
+//         let has_s2_heal = self.instructions.instruction_list.iter()
+//             .any(|instruction| matches!(instruction,
+//                 Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideTwo
+//             ));
+
+//         if has_s1_heal && state.side_one.get_active_immutable().moves.into_iter()
+//             .any(|m| matches!(m.id,
+//                 Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
+//                 Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
+//                 Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
+//                 Choices::SHOREUP
+//             )) {
+//             state.reverse_instructions(&self.instructions.instruction_list);
+//             if eval - evaluate(state) < 500000.0 {
+//                 penalty -= 10000.;
+//             }
+//             state.apply_instructions(&self.instructions.instruction_list);
+//         }
+
+//         if has_s2_heal && state.side_two.get_active_immutable().moves.into_iter()
+//             .any(|m| matches!(m.id,
+//                 Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
+//                 Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
+//                 Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
+//                 Choices::SHOREUP
+//             )) {
+//                 state.reverse_instructions(&self.instructions.instruction_list);
+//             if evaluate(state) - eval < 5.0 {
+//                 penalty += 10000.;
+//             }
+//             state.apply_instructions(&self.instructions.instruction_list);
+//         }
+
+//         penalty
+//     };
+
+//     eval + recovery_penalty
+// }
+
 pub fn perform_mcts_search_st(
     state: &mut State,
     iterations: Option<u32>,
