@@ -3,11 +3,12 @@ use crate::generate_instructions::generate_instructions_from_move_pair;
 use crate::instruction::StateInstructions;
 use crate::pokemon::PokemonName;
 use crate::state::{MoveChoice, State};
+use lazy_static::lazy_static;
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use smallvec::SmallVec;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::rc::{Rc, Weak};
@@ -18,6 +19,57 @@ thread_local! {
     static THREAD_RNG: RefCell<ThreadRng> = RefCell::new(thread_rng());
 }
 
+lazy_static! {
+    static ref RECOVERY_MOVES: HashSet<&'static str> = {
+        let mut moves = HashSet::new();
+        moves.insert("recover");
+        moves.insert("softboiled");
+        moves.insert("roost");
+        moves.insert("moonlight");
+        moves.insert("morningsun");
+        moves.insert("slackoff");
+        moves.insert("milkdrink");
+        moves.insert("synthesis");
+        moves.insert("healorder");
+        moves.insert("shoreup");
+        moves.insert("junglehealing");
+        moves.insert("healorder");
+        moves
+    };
+}
+pub fn custom_eval(state: &State, move_history: &[MoveHistoryEntry], prev_evals: &[f32]) -> f32 {
+    let base_eval = evaluate(state);
+
+    if move_history.is_empty() || prev_evals.is_empty() {
+        return base_eval;
+    }
+
+    // Check all moves in the sequence
+    for (i, entry) in move_history.iter().enumerate() {
+        let side = &state.side_one;
+        if let Some(active_pokemon) = side.pokemon.into_iter().find(|p| p.id == entry.our_active) {
+            match entry.our_move {
+                MoveChoice::Move(idx) | MoveChoice::MoveTera(idx) => {
+                    let mov = &active_pokemon.moves[&idx];
+                    if RECOVERY_MOVES.contains(mov.id.to_string().to_lowercase().as_str()) {
+                        let prev_eval = prev_evals[i];
+                        let cur_eval = if i + 1 < prev_evals.len() {
+                            prev_evals[i + 1]
+                        } else {
+                            base_eval
+                        };
+                        if cur_eval <= prev_eval + 8.0 {
+                            return base_eval - 100.; // Immediately penalize entire sequence
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    base_eval
+}
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-0.0125 * x).exp())
 }
@@ -282,9 +334,14 @@ impl DebugMCTSNode {
         mut debug_file: Option<&mut File>,
         state: &mut State,
         max_depth_seen: &Rc<RefCell<usize>>,
-    ) -> (Rc<RefCell<DebugMCTSNode>>, SmallVec<[MoveHistoryEntry; 16]>) {
+    ) -> (
+        Rc<RefCell<DebugMCTSNode>>,
+        SmallVec<[MoveHistoryEntry; 16]>,
+        Vec<f32>,
+    ) {
         let mut current_node = node;
         let mut move_history = SmallVec::new();
+        let mut prev_evals = Vec::new();
 
         if let Some(file) = debug_file.as_deref_mut() {
             writeln!(file, "\nInitial state:").unwrap();
@@ -312,7 +369,7 @@ impl DebugMCTSNode {
 
             let (our_moves, opp_moves) = state.get_all_options();
             if state.battle_is_over() != 0.0 || (our_moves.is_empty() && opp_moves.is_empty()) {
-                return (current_node, move_history);
+                return (current_node, move_history, prev_evals);
             }
 
             let valid_our_moves = if our_moves.contains(&MoveChoice::None) {
@@ -381,6 +438,7 @@ impl DebugMCTSNode {
                 let instructions =
                     generate_instructions_from_move_pair(state, &our_move, &opp_move, true);
                 let chosen_inst = sample_instruction(&instructions);
+                prev_evals.push(evaluate(state));
                 state.apply_instructions(&chosen_inst.instruction_list);
 
                 move_history.push(MoveHistoryEntry {
@@ -403,7 +461,7 @@ impl DebugMCTSNode {
                     .children
                     .insert(our_move, new_node_rc.clone());
 
-                return (new_node_rc, move_history);
+                return (new_node_rc, move_history, prev_evals);
             }
 
             // Selection phase
@@ -430,7 +488,7 @@ impl DebugMCTSNode {
 
             let (selected_move, next_node) = match selection_result {
                 (Some(mov), Some(node)) => (mov, node),
-                _ => return (current_node, move_history),
+                _ => return (current_node, move_history, prev_evals),
             };
 
             let selected_opp_move = if valid_opp_moves
@@ -462,6 +520,7 @@ impl DebugMCTSNode {
                 true,
             );
             let chosen_inst = sample_instruction(&instructions);
+            prev_evals.push(evaluate(state));
             state.apply_instructions(&chosen_inst.instruction_list);
 
             move_history.push(MoveHistoryEntry {
@@ -715,56 +774,6 @@ fn sample_instruction(instructions: &[StateInstructions]) -> &StateInstructions 
     })
 }
 
-// fn custom_eval(&mut self, state: &mut State) -> f32 {
-//     let eval = evaluate(state);
-
-//     let recovery_penalty = {
-//         let mut penalty = 0.0;
-
-//         let has_s1_heal = self.instructions.instruction_list.iter()
-//             .any(|instruction| matches!(instruction,
-//                 Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideOne
-//             ));
-
-//         let has_s2_heal = self.instructions.instruction_list.iter()
-//             .any(|instruction| matches!(instruction,
-//                 Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideTwo
-//             ));
-
-//         if has_s1_heal && state.side_one.get_active_immutable().moves.into_iter()
-//             .any(|m| matches!(m.id,
-//                 Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
-//                 Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
-//                 Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
-//                 Choices::SHOREUP
-//             )) {
-//             state.reverse_instructions(&self.instructions.instruction_list);
-//             if eval - evaluate(state) < 500000.0 {
-//                 penalty -= 10000.;
-//             }
-//             state.apply_instructions(&self.instructions.instruction_list);
-//         }
-
-//         if has_s2_heal && state.side_two.get_active_immutable().moves.into_iter()
-//             .any(|m| matches!(m.id,
-//                 Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
-//                 Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
-//                 Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
-//                 Choices::SHOREUP
-//             )) {
-//                 state.reverse_instructions(&self.instructions.instruction_list);
-//             if evaluate(state) - eval < 5.0 {
-//                 penalty += 10000.;
-//             }
-//             state.apply_instructions(&self.instructions.instruction_list);
-//         }
-
-//         penalty
-//     };
-
-//     eval + recovery_penalty
-// }
-
 pub fn perform_mcts_search_st(
     state: &mut State,
     iterations: Option<u32>,
@@ -776,7 +785,7 @@ pub fn perform_mcts_search_st(
 
     while !should_stop(&start_time, iterations, time_limit, &mcts) {
         let mut sim_state = state.clone();
-        let (selected_node, move_history) = DebugMCTSNode::select_and_expand(
+        let (selected_node, move_history, prev_evals) = DebugMCTSNode::select_and_expand(
             Rc::clone(&mcts.root),
             None,
             &mut sim_state,
@@ -790,7 +799,8 @@ pub fn perform_mcts_search_st(
                 0.0
             }
         } else {
-            sigmoid(evaluate(&sim_state) - root_eval)
+            let eval = custom_eval(&sim_state, &move_history, &prev_evals);
+            sigmoid(eval - root_eval)
         };
 
         DebugMCTSNode::backpropagate(selected_node, score, &move_history);
@@ -873,7 +883,7 @@ fn internal_mcts_search(
         }
 
         let mut sim_state = state.clone();
-        let (selected_node, move_history) = DebugMCTSNode::select_and_expand(
+        let (selected_node, move_history, prev_evals) = DebugMCTSNode::select_and_expand(
             Rc::clone(&root_ref),
             debug_file.as_deref_mut(),
             &mut sim_state,
@@ -886,7 +896,7 @@ fn internal_mcts_search(
         }
 
         let score = if sim_state.battle_is_over() == 0.0 {
-            let eval = evaluate(&sim_state);
+            let eval = custom_eval(&sim_state, &move_history, &prev_evals);
             sigmoid(eval - root_eval)
         } else if sim_state.battle_is_over() > 0.0 {
             1.0
@@ -903,6 +913,7 @@ fn internal_mcts_search(
                 )
                 .unwrap();
             }
+            writeln!(file, "Score: {score}").unwrap();
         }
         DebugMCTSNode::backpropagate(selected_node, score, &move_history);
     }
