@@ -16,6 +16,36 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-0.0125 * x).exp())
 }
 
+fn check_bad_healing(state: &State, node: &Node, current_eval: f32, prev_eval: f32) -> (bool, bool) {
+    let s1_heal = node.instructions.instruction_list.iter()
+        .any(|instruction| matches!(instruction, 
+            Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideOne
+        )) 
+        && state.side_one.get_active_immutable().moves.into_iter()
+            .any(|m| matches!(m.id, 
+                Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
+                Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
+                Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
+                Choices::SHOREUP
+            )) 
+        && current_eval - prev_eval < 10.0;
+
+    let s2_heal = node.instructions.instruction_list.iter()
+        .any(|instruction| matches!(instruction, 
+            Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideTwo
+        ))
+        && state.side_two.get_active_immutable().moves.into_iter()
+            .any(|m| matches!(m.id,
+                Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
+                Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
+                Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
+                Choices::SHOREUP
+            ))
+        && prev_eval - current_eval < 10.0;
+
+    (s1_heal, s2_heal)
+}
+
 #[derive(Debug)]
 pub struct Node {
     pub root: bool,
@@ -146,55 +176,41 @@ impl Node {
     }
 
     fn custom_eval(&mut self, state: &mut State) -> f32 {
-        let eval = evaluate(state);
+        let current_eval = evaluate(state);
         
-        let recovery_penalty = {
-            let mut penalty = 0.0;
+        unsafe {
+            let mut has_s1_bad_heal = false;
+            let mut has_s2_bad_heal = false;
+            let mut instructions_to_reverse = Vec::new();
+            let mut current_node = self as *mut Node;
+            let mut eval_at_step = current_eval;
             
-            let has_s1_heal = self.instructions.instruction_list.iter()
-                .any(|instruction| matches!(instruction, 
-                    Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideOne
-                ));
+            while !(*current_node).root && !has_s1_bad_heal && !has_s2_bad_heal {
+                let node = &(*current_node);
+                instructions_to_reverse.push(&node.instructions.instruction_list);
                 
-            let has_s2_heal = self.instructions.instruction_list.iter()
-                .any(|instruction| matches!(instruction, 
-                    Instruction::Heal(heal_instruction) if heal_instruction.side_ref == SideReference::SideTwo
-                ));
-
-            if has_s1_heal && state.side_one.get_active_immutable().moves.into_iter()
-                .any(|m| matches!(m.id, 
-                    Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
-                    Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
-                    Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
-                    Choices::SHOREUP
-                )) {
-                state.reverse_instructions(&self.instructions.instruction_list);
-                if eval - evaluate(state) < 500000.0 {
-                    penalty -= 10000.;
-                }
-                state.apply_instructions(&self.instructions.instruction_list);
+                state.reverse_instructions(&node.instructions.instruction_list);
+                let prev_eval = evaluate(state);
+                
+                let (s1_heal, s2_heal) = check_bad_healing(state, node, eval_at_step, prev_eval);
+                has_s1_bad_heal |= s1_heal;
+                has_s2_bad_heal |= s2_heal;
+                
+                eval_at_step = prev_eval;
+                current_node = (*current_node).parent;
             }
-
-            if has_s2_heal && state.side_two.get_active_immutable().moves.into_iter()
-                .any(|m| matches!(m.id,
-                    Choices::RECOVER | Choices::ROOST | Choices::MOONLIGHT |
-                    Choices::MORNINGSUN | Choices::SYNTHESIS | Choices::HEALORDER |
-                    Choices::SLACKOFF | Choices::MILKDRINK | Choices::SOFTBOILED |
-                    Choices::SHOREUP
-                )) {
-                    state.reverse_instructions(&self.instructions.instruction_list);
-                if evaluate(state) - eval < 5.0 {
-                    penalty += 10000.;
-                }
-                state.apply_instructions(&self.instructions.instruction_list);
+            
+            // Restore state in one pass
+            for instructions in instructions_to_reverse.into_iter().rev() {
+                state.apply_instructions(instructions);
             }
-
-            penalty
-        };
-        
-        eval + recovery_penalty
+            
+            current_eval + 
+                if has_s1_bad_heal { -100.0 } else { 0.0 } +
+                if has_s2_bad_heal { 100.0 } else { 0.0 }
+        }
     }
-
+    
     pub unsafe fn backpropagate(&mut self, score: f32, state: &mut State) {
         self.times_visited += 1;
         if self.root {

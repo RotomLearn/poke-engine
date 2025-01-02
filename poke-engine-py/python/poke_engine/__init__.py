@@ -14,6 +14,7 @@ from ._poke_engine import (
     calculate_damage as _calculate_damage,
     state_from_string as _state_from_string,
     mcts as _mcts,
+    mcts_nh as _mcts_nh,
     id as _id
 )
 
@@ -150,6 +151,19 @@ def monte_carlo_tree_search(state: State, duration_ms: int = 1000) -> MctsResult
     :rtype: MctsResult
     """
     return MctsResult._from_rust(_mcts(state._into_rust_obj(), duration_ms))
+
+def monte_carlo_tree_search_nh(state: State, duration_ms: int = 1000) -> MctsResult:
+    """
+    Perform monte-carlo-tree-search on the given state and for the given duration
+
+    :param state: the state to search through
+    :type state: State
+    :param duration_ms: time in milliseconds to run the search
+    :type duration_ms: int
+    :return: the result of the search
+    :rtype: MctsResult
+    """
+    return MctsResult._from_rust(_mcts_nh(state._into_rust_obj(), duration_ms))
 
 
 def iterative_deepening_expectiminimax(
@@ -296,6 +310,7 @@ __all__ = [
     "IterativeDeepeningResult",
     "generate_instructions",
     "monte_carlo_tree_search",
+    "monte_carlo_tree_search_nh",
     "iterative_deepening_expectiminimax",
     "calculate_damage",
     "state_from_string"
