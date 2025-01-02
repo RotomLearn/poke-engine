@@ -6,6 +6,7 @@ use crate::generate_instructions::{
 use crate::inspect_state::inspect_state_and_observation;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
+use crate::mcts_noheal::perform_mcts_nh;
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
 use clap::Parser;
@@ -34,6 +35,7 @@ enum SubCommand {
     Expectiminimax(Expectiminimax),
     IterativeDeepening(IterativeDeepening),
     MonteCarloTreeSearch(MonteCarloTreeSearch),
+    MonteCarloTreeSearchNH(MonteCarloTreeSearchNH),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     InspectStateAndObservation(InspectStateAndObservation),
@@ -70,6 +72,15 @@ struct IterativeDeepening {
 
 #[derive(Parser)]
 struct MonteCarloTreeSearch {
+    #[clap(short, long, required = true)]
+    state: String,
+
+    #[clap(short, long, default_value_t = 5000)]
+    time_to_search_ms: u64,
+}
+
+#[derive(Parser)]
+struct MonteCarloTreeSearchNH {
     #[clap(short, long, required = true)]
     state: String,
 
@@ -620,7 +631,18 @@ pub fn main() {
                     side_two_options.clone(),
                     std::time::Duration::from_millis(mcts.time_to_search_ms),
                 );
-                print_mcts_result(&state, result);
+                pprint_mcts_result(&state, result);
+            }
+            SubCommand::MonteCarloTreeSearchNH(mcts) => {
+                state = State::deserialize(mcts.state.as_str());
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let result = perform_mcts_nh(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts.time_to_search_ms),
+                );
+                pprint_mcts_result(&state, result);
             }
             SubCommand::CalculateDamage(calculate_damage) => {
                 state = State::deserialize(calculate_damage.state.as_str());
