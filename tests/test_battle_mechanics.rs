@@ -1,6 +1,6 @@
 #![cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
 
-use poke_engine::abilities::Abilities;
+use poke_engine::abilities::{Abilities, WEATHER_ABILITY_TURNS};
 use poke_engine::choices::{Choices, MOVES};
 use poke_engine::damage_calc::CRIT_MULTIPLIER;
 use poke_engine::generate_instructions::{
@@ -8112,6 +8112,164 @@ fn test_painsplit() {
 }
 
 #[test]
+fn test_icefang_multi_secondary() {
+    let mut state = State::default();
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::NONE,
+        Choices::ICEFANG,
+    );
+
+    let expected_instructions = vec![
+        StateInstructions {
+            percentage: 5.000001,
+            instruction_list: vec![],
+        },
+        StateInstructions {
+            percentage: 76.95,
+            instruction_list: vec![Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 51,
+            })],
+        },
+        StateInstructions {
+            percentage: 8.55,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 51,
+                }),
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+            ],
+        },
+        StateInstructions {
+            percentage: 8.55,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 51,
+                }),
+                Instruction::ChangeStatus(ChangeStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    pokemon_index: PokemonIndex::P0,
+                    old_status: PokemonStatus::NONE,
+                    new_status: PokemonStatus::FREEZE,
+                }),
+            ],
+        },
+        StateInstructions {
+            percentage: 0.95,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 51,
+                }),
+                Instruction::ChangeStatus(ChangeStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    pokemon_index: PokemonIndex::P0,
+                    old_status: PokemonStatus::NONE,
+                    new_status: PokemonStatus::FREEZE,
+                }),
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+            ],
+        },
+    ];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_triplearrows_multi_secondary() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 500;
+    state.side_one.get_active().maxhp = 500;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::NONE,
+        Choices::TRIPLEARROWS,
+    );
+
+    let expected_instructions = vec![
+        StateInstructions {
+            percentage: 35.0,
+            instruction_list: vec![Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 142,
+            })],
+        },
+        StateInstructions {
+            percentage: 15.000001,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 142,
+                }),
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+            ],
+        },
+        StateInstructions {
+            percentage: 35.0,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 142,
+                }),
+                Instruction::Boost(BoostInstruction {
+                    side_ref: SideReference::SideOne,
+                    stat: PokemonBoostableStat::Defense,
+                    amount: -1,
+                }),
+            ],
+        },
+        StateInstructions {
+            percentage: 15.000001,
+            instruction_list: vec![
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 142,
+                }),
+                Instruction::Boost(BoostInstruction {
+                    side_ref: SideReference::SideOne,
+                    stat: PokemonBoostableStat::Defense,
+                    amount: -1,
+                }),
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+            ],
+        },
+    ];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_superfang() {
     let mut state = State::default();
     state.side_two.get_active().hp = 60;
@@ -11176,6 +11334,7 @@ fn test_snowscape() {
 }
 
 #[test]
+#[cfg(any(feature = "gen8", feature = "gen9"))]
 fn test_sandspit() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::SANDSPIT;
@@ -11264,6 +11423,7 @@ fn test_toxicdebris_when_max_kayers_already_hit() {
 }
 
 #[test]
+#[cfg(any(feature = "gen8", feature = "gen9"))]
 fn test_sandspit_does_not_activate_on_miss() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::SANDSPIT;
@@ -13263,6 +13423,7 @@ fn test_oblivious_versus_intimidate() {
 }
 
 #[test]
+#[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
 fn test_drizzle() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DRIZZLE;
@@ -13283,9 +13444,105 @@ fn test_drizzle() {
             }),
             Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::RAIN,
-                new_weather_turns_remaining: -1,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
                 previous_weather: Weather::NONE,
                 previous_weather_turns_remaining: -1,
+            }),
+            Instruction::DecrementWeatherTurnsRemaining,
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+fn test_drizzle() {
+    let mut state = State::default();
+    state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DRIZZLE;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+            Instruction::ChangeWeather(ChangeWeather {
+                new_weather: Weather::RAIN,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
+                previous_weather: Weather::NONE,
+                previous_weather_turns_remaining: -1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_primordial_sea_on_switchout() {
+    let mut state = State::default();
+    state.side_one.pokemon[PokemonIndex::P0].ability = Abilities::PRIMORDIALSEA;
+    state.weather.weather_type = Weather::HEAVYRAIN;
+    state.weather.turns_remaining = -1;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::ChangeWeather(ChangeWeather {
+                new_weather: Weather::NONE,
+                new_weather_turns_remaining: -1,
+                previous_weather: Weather::HEAVYRAIN,
+                previous_weather_turns_remaining: -1,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_desolateland_on_switchout() {
+    let mut state = State::default();
+    state.side_one.pokemon[PokemonIndex::P0].ability = Abilities::DESOLATELAND;
+    state.weather.weather_type = Weather::HARSHSUN;
+    state.weather.turns_remaining = -1;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::ChangeWeather(ChangeWeather {
+                new_weather: Weather::NONE,
+                new_weather_turns_remaining: -1,
+                previous_weather: Weather::HARSHSUN,
+                previous_weather_turns_remaining: -1,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
             }),
         ],
     }];
@@ -13419,6 +13676,7 @@ fn test_hadronenegine_terrain_application() {
 }
 
 #[test]
+#[cfg(feature = "gen9")]
 fn test_orichalcumpulse_weather_application() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::ORICHALCUMPULSE;
@@ -13439,10 +13697,11 @@ fn test_orichalcumpulse_weather_application() {
             }),
             Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::SUN,
-                new_weather_turns_remaining: -1,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
                 previous_weather: Weather::NONE,
                 previous_weather_turns_remaining: -1,
             }),
+            Instruction::DecrementWeatherTurnsRemaining,
         ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
@@ -13537,6 +13796,7 @@ fn test_raging_bull_removes_screens() {
 }
 
 #[test]
+#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
 fn test_drought() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DROUGHT;
@@ -13557,7 +13817,7 @@ fn test_drought() {
             }),
             Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::SUN,
-                new_weather_turns_remaining: -1,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
                 previous_weather: Weather::NONE,
                 previous_weather_turns_remaining: -1,
             }),
@@ -13567,7 +13827,39 @@ fn test_drought() {
 }
 
 #[test]
-#[cfg(not(feature = "gen9"))]
+#[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+fn test_drought() {
+    let mut state = State::default();
+    state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DROUGHT;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+            Instruction::ChangeWeather(ChangeWeather {
+                new_weather: Weather::SUN,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
+                previous_weather: Weather::NONE,
+                previous_weather_turns_remaining: -1,
+            }),
+            Instruction::DecrementWeatherTurnsRemaining,
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+#[cfg(feature = "gen8")]
 fn test_pre_gen9_snowwarning() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::SNOWWARNING;
@@ -13588,10 +13880,11 @@ fn test_pre_gen9_snowwarning() {
             }),
             Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::HAIL,
-                new_weather_turns_remaining: -1,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
                 previous_weather: Weather::NONE,
                 previous_weather_turns_remaining: -1,
             }),
+            Instruction::DecrementWeatherTurnsRemaining,
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 6,
@@ -13627,10 +13920,11 @@ fn test_gen9_snowwarning() {
             }),
             Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::SNOW,
-                new_weather_turns_remaining: -1,
+                new_weather_turns_remaining: WEATHER_ABILITY_TURNS,
                 previous_weather: Weather::NONE,
                 previous_weather_turns_remaining: -1,
             }),
+            Instruction::DecrementWeatherTurnsRemaining,
         ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
