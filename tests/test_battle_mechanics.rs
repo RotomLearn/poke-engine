@@ -2898,6 +2898,88 @@ fn test_destinybond_kills_on_knockout() {
 }
 
 #[test]
+#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+fn test_earlier_gen_nothing_happens_if_destinybond_is_used_while_already_having_destinybond() {
+    let mut state = State::default();
+    state.side_one.get_active().speed = 150;
+    state
+        .side_one
+        .volatile_statuses
+        .insert(PokemonVolatileStatus::DESTINYBOND);
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::DESTINYBOND,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9",))]
+fn test_later_gen_destinybond_cannot_be_used_twice_in_a_row() {
+    let mut state = State::default();
+    state.side_one.get_active().speed = 150;
+    state
+        .side_one
+        .volatile_statuses
+        .insert(PokemonVolatileStatus::DESTINYBOND);
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::DESTINYBOND,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::RemoveVolatileStatus(
+            RemoveVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::DESTINYBOND,
+            },
+        )],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_destinybond_is_removed_if_non_destinybond_is_used() {
+    let mut state = State::default();
+    state.side_one.get_active().speed = 150;
+    state
+        .side_one
+        .volatile_statuses
+        .insert(PokemonVolatileStatus::DESTINYBOND);
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::DESTINYBOND,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 48,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_destinybond_against_toxic_damage_does_not_kill_opponent() {
     let mut state = State::default();
     state.side_one.get_active().speed = 150;
@@ -2939,7 +3021,7 @@ fn test_destinybond_against_toxic_damage_does_not_kill_opponent() {
 }
 
 #[test]
-fn test_destinybond_volatile_is_removed_at_end_of_turn_if_not_fainted() {
+fn test_destinybond_volatile_is_not_removed_at_end_of_turn() {
     let mut state = State::default();
     state.side_one.get_active().speed = 150;
     state.side_one.get_active().hp = 1;
@@ -2954,16 +3036,12 @@ fn test_destinybond_volatile_is_removed_at_end_of_turn_if_not_fainted() {
 
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
-        instruction_list: vec![
-            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+        instruction_list: vec![Instruction::ApplyVolatileStatus(
+            ApplyVolatileStatusInstruction {
                 side_ref: SideReference::SideOne,
                 volatile_status: PokemonVolatileStatus::DESTINYBOND,
-            }),
-            Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
-                side_ref: SideReference::SideOne,
-                volatile_status: PokemonVolatileStatus::DESTINYBOND,
-            }),
-        ],
+            },
+        )],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -5818,6 +5896,24 @@ fn test_uturn_into_protect_does_not_cause_switchout() {
 }
 
 #[test]
+fn test_flipturn_into_dryskin_does_not_trigger_switchout() {
+    let mut state = State::default();
+    state.side_two.get_active().ability = Abilities::DRYSKIN;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::FLIPTURN,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_uturn_into_fainted_pkmn_does_not_cause_switchout() {
     let mut state = State::default();
     state.side_two.get_active().hp = 1;
@@ -7046,6 +7142,45 @@ fn test_pressure_caused_double_pp_decrement() {
 }
 
 #[test]
+fn test_pressure_does_not_cause_pp_decrement_if_move_targets_self() {
+    let mut state = State::default();
+    state.side_two.get_active().ability = Abilities::PRESSURE;
+    state
+        .side_one
+        .get_active()
+        .replace_move(PokemonMoveIndex::M0, Choices::RECOVER);
+    state.side_one.get_active().moves[&PokemonMoveIndex::M0].pp = 5;
+    state
+        .side_two
+        .get_active()
+        .replace_move(PokemonMoveIndex::M0, Choices::SPLASH);
+    state.side_two.get_active().moves[&PokemonMoveIndex::M0].pp = 1;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::DecrementPP(DecrementPPInstruction {
+                side_ref: SideReference::SideTwo,
+                move_index: PokemonMoveIndex::M0,
+                amount: 1,
+            }),
+            Instruction::DecrementPP(DecrementPPInstruction {
+                side_ref: SideReference::SideOne,
+                move_index: PokemonMoveIndex::M0,
+                amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_pp_decremented() {
     let mut state = State::default();
     state
@@ -7824,6 +7959,26 @@ fn test_wish_healing_end_of_turn() {
                 side_ref: SideReference::SideOne,
             }),
         ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_revelationdance_is_set_to_tera_type_when_terastallized() {
+    let mut state = State::default();
+    state.side_one.get_active().terastallized = true;
+    state.side_one.get_active().tera_type = PokemonType::GROUND;
+    state.side_two.get_active().types.0 = PokemonType::FLYING; // should be immune to ground type revelationdance
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::REVELATIONDANCE,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -9012,6 +9167,26 @@ fn test_strengthsap() {
                 amount: -1,
             }),
         ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_strengthsap_fails_at_negative_6_boost_on_opponent() {
+    let mut state = State::default();
+    state.side_one.get_active().maxhp = 500;
+    state.side_one.get_active().hp = 100;
+    state.side_two.attack_boost = -6;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::STRENGTHSAP,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -10562,6 +10737,165 @@ fn test_iceface_eiscue_taking_physical_hit() {
             }),
         ],
     }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_eiscue_taking_uturn() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::EISCUE;
+    state.side_one.get_active().ability = Abilities::ICEFACE;
+    state.side_one.get_active().attack = 217;
+    state.side_one.get_active().special_attack = 187;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::UTURN,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::EISCUENOICE,
+                previous_forme: PokemonName::EISCUE,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 97,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 217,
+            }),
+            Instruction::ToggleSideTwoForceSwitch,
+            Instruction::SetSideOneMoveSecondSwitchOutMove(SetSecondMoveSwitchOutMoveInstruction {
+                new_choice: Choices::SPLASH,
+                previous_choice: Choices::NONE,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_against_move_with_secondary() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::EISCUE;
+    state.side_one.get_active().ability = Abilities::ICEFACE;
+    state.side_one.get_active().attack = 217;
+    state.side_one.get_active().special_attack = 187;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::POWERUPPUNCH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                new_forme: PokemonName::EISCUENOICE,
+                previous_forme: PokemonName::EISCUE,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 97,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 57,
+            }),
+            Instruction::ChangeSpeed(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 217,
+            }),
+            Instruction::Boost(BoostInstruction {
+                side_ref: SideReference::SideTwo,
+                stat: PokemonBoostableStat::Attack,
+                amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_iceface_against_move_with_possible_secondary() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::EISCUE;
+    state.side_one.get_active().ability = Abilities::ICEFACE;
+    state.side_one.get_active().attack = 217;
+    state.side_one.get_active().special_attack = 187;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::IRONHEAD,
+    );
+
+    let expected_instructions = vec![
+        StateInstructions {
+            percentage: 70.0,
+            instruction_list: vec![
+                Instruction::FormeChange(FormeChangeInstruction {
+                    side_ref: SideReference::SideOne,
+                    new_forme: PokemonName::EISCUENOICE,
+                    previous_forme: PokemonName::EISCUE,
+                }),
+                Instruction::ChangeDefense(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 97,
+                }),
+                Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 57,
+                }),
+                Instruction::ChangeSpeed(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 217,
+                }),
+            ],
+        },
+        StateInstructions {
+            percentage: 30.000002,
+            instruction_list: vec![
+                Instruction::FormeChange(FormeChangeInstruction {
+                    side_ref: SideReference::SideOne,
+                    new_forme: PokemonName::EISCUENOICE,
+                    previous_forme: PokemonName::EISCUE,
+                }),
+                Instruction::ChangeDefense(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 97,
+                }),
+                Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 57,
+                }),
+                Instruction::ChangeSpeed(ChangeStatInstruction {
+                    side_ref: SideReference::SideOne,
+                    amount: 217,
+                }),
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::FLINCH,
+                }),
+            ],
+        },
+    ];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
 
@@ -14414,6 +14748,30 @@ fn test_adaptability() {
 }
 
 #[test]
+#[cfg(feature = "terastallization")]
+fn test_adaptability_with_tera_stab_is_225_percent() {
+    let mut state = State::default();
+    state.side_one.get_active().ability = Abilities::ADAPTABILITY;
+    state.side_one.get_active().terastallized = true;
+    state.side_one.get_active().tera_type = PokemonType::NORMAL;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideTwo,
+            damage_amount: 100,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_armortail_against_priority() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::ARMORTAIL;
@@ -14836,6 +15194,88 @@ fn test_rattled() {
                 side_ref: SideReference::SideTwo,
                 stat: PokemonBoostableStat::Speed,
                 amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_healblock_prevents_drainpunch() {
+    let mut state = State::default();
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::DRAINPUNCH,
+        Choices::PSYCHICNOISE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 60,
+            }),
+            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::HEALBLOCK,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_healblock_prevents_synthesis() {
+    let mut state = State::default();
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SYNTHESIS,
+        Choices::PSYCHICNOISE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 60,
+            }),
+            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::HEALBLOCK,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_healblock_does_not_prevent_tackle() {
+    let mut state = State::default();
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::PSYCHICNOISE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 60,
+            }),
+            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::HEALBLOCK,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 48,
             }),
         ],
     }];

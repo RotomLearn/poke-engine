@@ -173,6 +173,7 @@ define_enum_with_from_str! {
         HEARTHFLAMEMASK,
         CORNERSTONEMASK,
         WIDELENS,
+        LOADEDDICE,
     },
     default = UNKNOWNITEM
 }
@@ -901,7 +902,7 @@ pub fn item_modify_attack_against(
             }
         }
         Items::ASSAULTVEST => {
-            if attacking_choice.category == MoveCategory::Special {
+            if attacking_choice.targets_special_defense() {
                 attacking_choice.base_power /= 1.5;
             }
         }
@@ -1297,6 +1298,44 @@ pub fn item_modify_attack_being_used(
         ))]
         Items::SOFTSAND => {
             if attacking_choice.move_type == PokemonType::GROUND {
+                attacking_choice.base_power *= 1.2;
+            }
+        }
+        #[cfg(feature = "gen3")]
+        Items::SPELLTAG => {
+            if attacking_choice.move_type == PokemonType::GHOST {
+                attacking_choice.base_power *= 1.1;
+            }
+        }
+        #[cfg(any(
+            feature = "gen4",
+            feature = "gen5",
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9"
+        ))]
+        Items::SPELLTAG => {
+            if attacking_choice.move_type == PokemonType::GHOST {
+                attacking_choice.base_power *= 1.2;
+            }
+        }
+        #[cfg(feature = "gen3")]
+        Items::MIRACLESEED => {
+            if attacking_choice.move_type == PokemonType::GRASS {
+                attacking_choice.base_power *= 1.1;
+            }
+        }
+        #[cfg(any(
+            feature = "gen4",
+            feature = "gen5",
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9"
+        ))]
+        Items::MIRACLESEED => {
+            if attacking_choice.move_type == PokemonType::GRASS {
                 attacking_choice.base_power *= 1.2;
             }
         }

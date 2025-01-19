@@ -514,7 +514,10 @@ pub fn ability_before_move(
         Abilities::ICEFACE => {
             if defending_pkmn.id == PokemonName::EISCUE && choice.category == MoveCategory::Physical
             {
-                choice.base_power = 0.0;
+                // hacky - changing the move to a status move makes it do no
+                // damage but preserve secondary effects
+                // due to some bad choices I made I cannot just set base_power to 0
+                choice.category = MoveCategory::Status;
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: side_ref.get_other_side(),
@@ -1749,7 +1752,13 @@ pub fn ability_modify_attack_being_used(
         }
         Abilities::ADAPTABILITY => {
             if attacking_pkmn.has_type(&attacker_choice.move_type) {
-                attacker_choice.base_power *= 4.0 / 3.0;
+                if attacking_pkmn.terastallized
+                    && attacker_choice.move_type == attacking_pkmn.tera_type
+                {
+                    attacker_choice.base_power *= 2.25 / 2.0;
+                } else {
+                    attacker_choice.base_power *= 2.0 / 1.5;
+                }
             }
         }
         Abilities::LONGREACH => {
@@ -2048,7 +2057,8 @@ pub fn ability_modify_attack_against(
         return;
     }
     if (attacking_pkmn.ability == Abilities::MOLDBREAKER
-        || attacking_pkmn.ability == Abilities::MYCELIUMMIGHT
+        || (attacking_pkmn.ability == Abilities::MYCELIUMMIGHT
+            && attacker_choice.category == MoveCategory::Status)
         || attacking_pkmn.ability == Abilities::TERAVOLT
         || attacking_pkmn.ability == Abilities::TURBOBLAZE)
         && mold_breaker_ignores(&target_pkmn.ability)

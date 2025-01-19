@@ -1293,6 +1293,7 @@ lazy_static! {
                     contact: true,
                     protect: true,
                     slicing: true,
+                    heal: true,
                     ..Default::default()
                 },
                 drain: Some(0.5),
@@ -10011,6 +10012,7 @@ lazy_static! {
                 move_type: PokemonType::GRASS,
                 flags: Flags {
                     protect: true,
+                    heal: true,
                     ..Default::default()
                 },
                 secondaries: Some(vec![Secondary {
@@ -13282,6 +13284,7 @@ lazy_static! {
                 target: MoveTarget::User,
                 move_type: PokemonType::NORMAL,
                 flags: Flags {
+                    heal: true,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -17233,6 +17236,7 @@ lazy_static! {
             Choice {
                 move_id: Choices::THUNDERCLAP,
                 base_power: 70.0,
+                priority: 1,
                 category: MoveCategory::Special,
                 move_type: PokemonType::ELECTRIC,
                 flags: Flags {
@@ -19010,6 +19014,27 @@ impl Default for Flags {
     }
 }
 
+impl Flags {
+    pub fn clear_all(&mut self) {
+        self.bite = false;
+        self.bullet = false;
+        self.charge = false;
+        self.contact = false;
+        self.drag = false;
+        self.heal = false;
+        self.powder = false;
+        self.protect = false;
+        self.pulse = false;
+        self.punch = false;
+        self.recharge = false;
+        self.reflectable = false;
+        self.slicing = false;
+        self.sound = false;
+        self.pivot = false;
+        self.wind = false;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Secondary {
     pub chance: f32,
@@ -19033,6 +19058,7 @@ pub enum MultiHitMove {
     TripleHit,
     TwoToFiveHits,
     PopulationBomb,
+    TripleAxel,
 }
 
 #[derive(PartialEq)]
@@ -20090,11 +20116,20 @@ impl Choice {
             Choices::TWINBEAM => MultiHitMove::DoubleHit,
             Choices::TWINEEDLE => MultiHitMove::DoubleHit,
             Choices::WATERSHURIKEN => MultiHitMove::TwoToFiveHits,
+
+            // These are multi-accuracy
+            // but until that is implemented we approximate them as multi-hit
             Choices::POPULATIONBOMB => MultiHitMove::PopulationBomb,
+            Choices::TRIPLEAXEL => MultiHitMove::TripleAxel,
             _ => MultiHitMove::None,
         }
     }
-
+    pub fn targets_special_defense(&self) -> bool {
+        self.category == MoveCategory::Special
+            && !(self.move_id == Choices::PSYSHOCK
+                || self.move_id == Choices::SECRETSWORD
+                || self.move_id == Choices::PSYSTRIKE)
+    }
     pub fn add_or_create_secondaries(&mut self, secondary: Secondary) {
         if let Some(secondaries) = &mut self.secondaries {
             secondaries.push(secondary);
@@ -20121,6 +20156,7 @@ impl Choice {
     }
     pub fn remove_all_effects(&mut self) {
         self.category = MoveCategory::Status;
+        self.flags.clear_all();
         self.base_power = 0.0;
         self.accuracy = 100.0;
         self.heal = None;

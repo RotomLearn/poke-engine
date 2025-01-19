@@ -1,6 +1,6 @@
 [package]
 name = "poke-engine"
-version = "0.0.25"
+version = "0.0.27"
 authors = ["pmariglia <pmariglia@github.com>"]
 edition = "2018"
 license-file = "LICENSE"
@@ -33,7 +33,7 @@ gen5 = []
 gen6 = []
 gen7 = []
 gen8 = []
-gen9 = []
+gen9 = ["terastallization"]
 terastallization = ["gen9"]
 
 default = []

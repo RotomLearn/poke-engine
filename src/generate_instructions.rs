@@ -43,6 +43,9 @@ use crate::{
 };
 use std::cmp;
 
+#[cfg(feature = "terastallization")]
+use crate::choices::MultiAccuracyMove;
+
 #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 16.0;
 
@@ -60,6 +63,12 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
     feature = "gen9"
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
+
+#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
+
+#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
 
 fn chance_to_wake_up(turns_asleep: i8) -> f32 {
     if turns_asleep == 0 {
@@ -1264,8 +1273,35 @@ fn cannot_use_move(state: &State, choice: &Choice, attacking_side_ref: &SideRefe
         .contains(&PokemonVolatileStatus::FLINCH)
     {
         return true;
+    } else if choice.flags.heal
+        && attacking_side
+            .volatile_statuses
+            .contains(&PokemonVolatileStatus::HEALBLOCK)
+    {
+        return true;
     }
     false
+}
+
+#[cfg(feature = "terastallization")]
+fn terastallized_base_power_floor(
+    state: &mut State,
+    choice: &mut Choice,
+    attacking_side: &SideReference,
+) {
+    let attacker = state
+        .get_side_immutable(attacking_side)
+        .get_active_immutable();
+
+    if attacker.terastallized
+        && choice.move_type == attacker.tera_type
+        && choice.base_power < 60.0
+        && choice.priority <= 0
+        && choice.multi_hit() == MultiHitMove::None
+        && choice.multi_accuracy() == MultiAccuracyMove::None
+    {
+        choice.base_power = 60.0;
+    }
 }
 
 fn before_move(
@@ -1275,6 +1311,9 @@ fn before_move(
     attacking_side: &SideReference,
     incoming_instructions: &mut StateInstructions,
 ) {
+    #[cfg(feature = "terastallization")]
+    terastallized_base_power_floor(state, choice, attacking_side);
+
     ability_before_move(state, choice, attacking_side, incoming_instructions);
     item_before_move(state, choice, attacking_side, incoming_instructions);
     choice_before_move(state, choice, attacking_side, incoming_instructions);
@@ -1583,7 +1622,7 @@ fn generate_instructions_from_existing_status_conditions(
         .contains(&PokemonVolatileStatus::CONFUSION)
     {
         let mut hit_yourself_instruction = incoming_instructions.clone();
-        hit_yourself_instruction.update_percentage(0.50);
+        hit_yourself_instruction.update_percentage(HIT_SELF_IN_CONFUSION_CHANCE);
 
         let attacking_stat = attacking_side.calculate_boosted_stat(PokemonBoostableStat::Attack);
         let defending_stat = attacking_side.calculate_boosted_stat(PokemonBoostableStat::Defense);
@@ -1611,7 +1650,7 @@ fn generate_instructions_from_existing_status_conditions(
 
         final_instructions.push(hit_yourself_instruction);
 
-        incoming_instructions.update_percentage(0.50);
+        incoming_instructions.update_percentage(1.0 - HIT_SELF_IN_CONFUSION_CHANCE);
     }
 }
 
@@ -1769,12 +1808,13 @@ pub fn generate_instructions_from_move(
     let (attacker_side, defender_side) = state.get_both_sides(&attacking_side);
     let active = attacker_side.get_active();
     if active.moves[&choice.move_index].pp < 10 {
-        let pp_decrement_amount =
-            if defender_side.get_active_immutable().ability == Abilities::PRESSURE {
-                2
-            } else {
-                1
-            };
+        let pp_decrement_amount = if choice.target == MoveTarget::Opponent
+            && defender_side.get_active_immutable().ability == Abilities::PRESSURE
+        {
+            2
+        } else {
+            1
+        };
         incoming_instructions
             .instruction_list
             .push(Instruction::DecrementPP(DecrementPPInstruction {
@@ -1870,6 +1910,8 @@ pub fn generate_instructions_from_move(
             hit_count =
                 if state.get_side(&attacking_side).get_active().ability == Abilities::SKILLLINK {
                     5
+                } else if state.get_side(&attacking_side).get_active().item == Items::LOADEDDICE {
+                    4
                 } else {
                     3 // too lazy to implement branching here. Average is 3.2 so this is a fine approximation
                 };
@@ -1881,6 +1923,11 @@ pub fn generate_instructions_from_move(
             } else {
                 6
             };
+        }
+        MultiHitMove::TripleAxel => {
+            // triple axel checks accuracy each time but until multi-accuracy is implemented this
+            // is the best we can do
+            hit_count = 3
         }
     }
 
@@ -2630,21 +2677,6 @@ fn add_end_of_turn_instructions(
                     RemoveVolatileStatusInstruction {
                         side_ref: *side_ref,
                         volatile_status: PokemonVolatileStatus::ROOST,
-                    },
-                ));
-        }
-        if side
-            .volatile_statuses
-            .contains(&PokemonVolatileStatus::DESTINYBOND)
-        {
-            side.volatile_statuses
-                .remove(&PokemonVolatileStatus::DESTINYBOND);
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::RemoveVolatileStatus(
-                    RemoveVolatileStatusInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::DESTINYBOND,
                     },
                 ));
         }
@@ -7499,12 +7531,12 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * (1.0 - HIT_SELF_IN_CONFUSION_CHANCE),
             instruction_list: vec![],
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * (HIT_SELF_IN_CONFUSION_CHANCE),
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 35,
@@ -7539,7 +7571,7 @@ mod tests {
         })];
 
         let expected_instructions = StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * (1.0 - HIT_SELF_IN_CONFUSION_CHANCE),
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,
@@ -7547,7 +7579,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * HIT_SELF_IN_CONFUSION_CHANCE,
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
@@ -7589,7 +7621,7 @@ mod tests {
         })];
 
         let expected_instructions = StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * (1.0 - HIT_SELF_IN_CONFUSION_CHANCE),
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,
@@ -7597,7 +7629,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * HIT_SELF_IN_CONFUSION_CHANCE,
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
@@ -7712,7 +7744,7 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * (1.0 - HIT_SELF_IN_CONFUSION_CHANCE),
             instruction_list: vec![
                 Instruction::ChangeStatus(ChangeStatusInstruction {
                     side_ref: SideReference::SideOne,
@@ -7730,7 +7762,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 50.0,
+            percentage: 100.0 * HIT_SELF_IN_CONFUSION_CHANCE,
             instruction_list: vec![
                 Instruction::ChangeStatus(ChangeStatusInstruction {
                     side_ref: SideReference::SideOne,

@@ -267,9 +267,11 @@ pub fn add_remove_status_instructions(
 
 pub fn immune_to_status(
     state: &State,
+    attacker_choice: &Choice,
     status_target: &MoveTarget,
     target_side_ref: &SideReference,
     status: &PokemonStatus,
+    from_secondary: bool,
 ) -> bool {
     let target_side = state.get_side_immutable(target_side_ref);
     let target_pkmn = target_side.get_active_immutable();
@@ -296,7 +298,11 @@ pub fn immune_to_status(
                 status_target == &MoveTarget::Opponent
                     && target_side.has_alive_non_rested_sleeping_pkmn()
             }
-
+            PokemonStatus::PARALYZE => {
+                // gen1 paralysis cannot be applied from a secondary effect if one of
+                // the defender's types is the same as the move's type
+                from_secondary && target_pkmn.has_type(&attacker_choice.move_type)
+            }
             PokemonStatus::POISON | PokemonStatus::TOXIC => {
                 target_pkmn.has_type(&PokemonType::POISON)
                     || target_pkmn.has_type(&PokemonType::STEEL)
@@ -309,9 +315,11 @@ pub fn immune_to_status(
 fn get_instructions_from_status_effects(
     state: &mut State,
     status: &Status,
+    attacker_choice: &Choice,
     attacking_side_reference: &SideReference,
     incoming_instructions: &mut StateInstructions,
     hit_sub: bool,
+    from_secondary: bool,
 ) {
     let target_side_ref: SideReference;
     match status.target {
@@ -319,7 +327,16 @@ fn get_instructions_from_status_effects(
         MoveTarget::User => target_side_ref = *attacking_side_reference,
     }
 
-    if hit_sub || immune_to_status(state, &status.target, &target_side_ref, &status.status) {
+    if hit_sub
+        || immune_to_status(
+            state,
+            attacker_choice,
+            &status.target,
+            &target_side_ref,
+            &status.status,
+            from_secondary,
+        )
+    {
         return;
     }
 
@@ -407,6 +424,41 @@ fn get_instructions_from_boosts(
             attacking_side_reference,
             &target_side_ref,
         ) {
+            // gen1 burn & paralysis nullify if self boosting attack or speed respectively
+            if pkmn_boostable_stat == &PokemonBoostableStat::Attack
+                && side.get_active_immutable().status == PokemonStatus::BURN
+                && attacking_side_reference == &target_side_ref
+                && !side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::GEN1BURNNULLIFY)
+            {
+                let burn_nullify_ins =
+                    Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                        side_ref: *attacking_side_reference,
+                        volatile_status: PokemonVolatileStatus::GEN1BURNNULLIFY,
+                    });
+                state.apply_one_instruction(&burn_nullify_ins);
+                incoming_instructions
+                    .instruction_list
+                    .push(burn_nullify_ins);
+            } else if pkmn_boostable_stat == &PokemonBoostableStat::Speed
+                && side.get_active_immutable().status == PokemonStatus::PARALYZE
+                && attacking_side_reference == &target_side_ref
+                && !side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::GEN1PARALYSISNULLIFY)
+            {
+                let paralysis_nullify_ins =
+                    Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                        side_ref: *attacking_side_reference,
+                        volatile_status: PokemonVolatileStatus::GEN1PARALYSISNULLIFY,
+                    });
+                state.apply_one_instruction(&paralysis_nullify_ins);
+                incoming_instructions
+                    .instruction_list
+                    .push(paralysis_nullify_ins);
+            }
+
             state.apply_one_instruction(&boost_instruction);
             incoming_instructions
                 .instruction_list
@@ -478,9 +530,11 @@ fn get_instructions_from_secondaries(
                                 target: secondary.target.clone(),
                                 status: status.clone(),
                             },
+                            attacker_choice,
                             side_reference,
                             &mut secondary_hit_instructions,
                             hit_sub,
+                            true,
                         );
                     }
                     Effect::Heal(heal_amount) => {
@@ -1182,9 +1236,11 @@ pub fn generate_instructions_from_move(
                 get_instructions_from_status_effects(
                     state,
                     status,
+                    choice,
                     &attacking_side,
                     &mut incoming_instructions,
                     hit_sub,
+                    false,
                 );
             }
             if let Some(heal) = &choice.heal {
@@ -1247,9 +1303,11 @@ pub fn generate_instructions_from_move(
                     get_instructions_from_status_effects(
                         state,
                         status,
+                        choice,
                         &attacking_side,
                         &mut crit_instructions,
                         hit_sub,
+                        false,
                     );
                 }
                 if let Some(heal) = &choice.heal {
@@ -1307,7 +1365,12 @@ fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
     let active_pkmn = side.get_active_immutable();
 
     let mut boosted_speed = side.calculate_boosted_stat(PokemonBoostableStat::Speed) as f32;
-    if active_pkmn.status == PokemonStatus::PARALYZE {
+
+    if active_pkmn.status == PokemonStatus::PARALYZE
+        && !side
+            .volatile_statuses
+            .contains(&PokemonVolatileStatus::GEN1PARALYSISNULLIFY)
+    {
         boosted_speed *= 0.25;
     }
 

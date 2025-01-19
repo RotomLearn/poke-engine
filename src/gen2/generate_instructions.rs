@@ -1509,9 +1509,9 @@ pub fn generate_instructions_from_move(
         MultiHitMove::TwoToFiveHits => {
             hit_count = 3;
         }
-        MultiHitMove::PopulationBomb => {
+        _ => {
             // population bomb checks accuracy each time but lets approximate
-            hit_count = 9;
+            hit_count = 1;
         }
     }
 
@@ -1975,21 +1975,6 @@ pub fn add_end_of_turn_instructions(
                     RemoveVolatileStatusInstruction {
                         side_ref: *side_ref,
                         volatile_status: PokemonVolatileStatus::FLINCH,
-                    },
-                ));
-        }
-        if side
-            .volatile_statuses
-            .contains(&PokemonVolatileStatus::DESTINYBOND)
-        {
-            side.volatile_statuses
-                .remove(&PokemonVolatileStatus::DESTINYBOND);
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::RemoveVolatileStatus(
-                    RemoveVolatileStatusInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::DESTINYBOND,
                     },
                 ));
         }

@@ -11,14 +11,12 @@ use crate::instruction::{
 };
 use crate::items::{get_choice_move_disable_instructions, Items};
 use crate::pokemon::PokemonName;
+use crate::state::Side;
 use crate::state::{
     pokemon_index_iter, LastUsedMove, PokemonBoostableStat, PokemonSideCondition, PokemonStatus,
     PokemonType, PokemonVolatileStatus, SideReference, State, Terrain, Weather,
 };
 use std::cmp;
-
-#[cfg(feature = "terastallization")]
-use crate::choices::{MultiAccuracyMove, MultiHitMove};
 
 pub fn modify_choice(
     state: &State,
@@ -242,7 +240,11 @@ pub fn modify_choice(
             }
         }
         Choices::REVELATIONDANCE => {
-            attacker_choice.move_type = attacking_side.get_active_immutable().types.0;
+            if attacking_side.get_active_immutable().terastallized {
+                attacker_choice.move_type = attacking_side.get_active_immutable().tera_type;
+            } else {
+                attacker_choice.move_type = attacking_side.get_active_immutable().types.0;
+            }
         }
         Choices::RISINGVOLTAGE => {
             if state.terrain.terrain_type == Terrain::ELECTRICTERRAIN {
@@ -274,13 +276,15 @@ pub fn modify_choice(
                     accuracy: 0,
                 },
             });
-            let defender_attack =
-                defending_side.calculate_boosted_stat(PokemonBoostableStat::Attack);
-            let attacker_maxhp = attacking_side.get_active_immutable().maxhp;
-            attacker_choice.heal = Some(Heal {
-                target: MoveTarget::User,
-                amount: defender_attack as f32 / attacker_maxhp as f32,
-            });
+            if defending_side.attack_boost != -6 {
+                let defender_attack =
+                    defending_side.calculate_boosted_stat(PokemonBoostableStat::Attack);
+                let attacker_maxhp = attacking_side.get_active_immutable().maxhp;
+                attacker_choice.heal = Some(Heal {
+                    target: MoveTarget::User,
+                    amount: defender_attack as f32 / attacker_maxhp as f32,
+                });
+            }
         }
         Choices::TERABLAST => {
             let active = attacking_side.get_active_immutable();
@@ -666,6 +670,63 @@ pub fn choice_after_damage_hit(
     }
 }
 
+#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+fn destinybond_before_move(
+    attacking_side: &mut Side,
+    attacking_side_ref: &SideReference,
+    choice: &Choice,
+    instructions: &mut StateInstructions,
+) {
+    // gens 2-6 destinybond is only removed if you are not using destinybond
+    // destinybond is preserved, even if used twice in a row
+    if choice.move_id != Choices::DESTINYBOND
+        && attacking_side
+            .volatile_statuses
+            .contains(&PokemonVolatileStatus::DESTINYBOND)
+    {
+        instructions
+            .instruction_list
+            .push(Instruction::RemoveVolatileStatus(
+                RemoveVolatileStatusInstruction {
+                    side_ref: *attacking_side_ref,
+                    volatile_status: PokemonVolatileStatus::DESTINYBOND,
+                },
+            ));
+        attacking_side
+            .volatile_statuses
+            .remove(&PokemonVolatileStatus::DESTINYBOND);
+    }
+}
+
+#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+fn destinybond_before_move(
+    attacking_side: &mut Side,
+    attacking_side_ref: &SideReference,
+    choice: &mut Choice,
+    instructions: &mut StateInstructions,
+) {
+    // gens 7+ destinybond cannot be used if destinybond is active
+    if attacking_side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::DESTINYBOND)
+    {
+        instructions
+            .instruction_list
+            .push(Instruction::RemoveVolatileStatus(
+                RemoveVolatileStatusInstruction {
+                    side_ref: *attacking_side_ref,
+                    volatile_status: PokemonVolatileStatus::DESTINYBOND,
+                },
+            ));
+        attacking_side
+            .volatile_statuses
+            .remove(&PokemonVolatileStatus::DESTINYBOND);
+        if choice.move_id == Choices::DESTINYBOND {
+            choice.remove_all_effects();
+        }
+    }
+}
+
 pub fn choice_before_move(
     state: &mut State,
     choice: &mut Choice,
@@ -673,19 +734,11 @@ pub fn choice_before_move(
     instructions: &mut StateInstructions,
 ) {
     let (attacking_side, defending_side) = state.get_both_sides(attacking_side_ref);
+
+    destinybond_before_move(attacking_side, attacking_side_ref, choice, instructions);
+
     let attacker = attacking_side.get_active();
     let defender = defending_side.get_active_immutable();
-
-    #[cfg(feature = "terastallization")]
-    if attacker.terastallized
-        && choice.move_type == attacker.tera_type
-        && choice.base_power < 60.0
-        && choice.priority <= 0
-        && choice.multi_hit() == MultiHitMove::None
-        && choice.multi_accuracy() == MultiAccuracyMove::None
-    {
-        choice.base_power = 60.0;
-    }
 
     match choice.move_id {
         Choices::FUTURESIGHT => {
