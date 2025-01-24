@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::abilities::Abilities;
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
 use crate::define_enum_with_from_str;
@@ -60,7 +62,7 @@ pub enum LastUsedMove {
     None,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Serialize, Deserialize)]
 pub enum MoveChoice {
     MoveTera(PokemonMoveIndex),
     Move(PokemonMoveIndex),
@@ -414,7 +416,7 @@ impl Default for SideConditions {
     }
 }
 
-#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, Serialize, Deserialize)]
 pub enum PokemonMoveIndex {
     M0,
     M1,
@@ -898,7 +900,7 @@ impl Default for Pokemon {
     }
 }
 
-#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, Copy, PartialEq, Clone, Eq, Hash, Serialize, Deserialize)]
 pub enum PokemonIndex {
     P0,
     P1,

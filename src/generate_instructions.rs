@@ -1807,23 +1807,21 @@ pub fn generate_instructions_from_move(
     // to matter
     let (attacker_side, defender_side) = state.get_both_sides(&attacking_side);
     let active = attacker_side.get_active();
-    if active.moves[&choice.move_index].pp < 10 {
-        let pp_decrement_amount = if choice.target == MoveTarget::Opponent
-            && defender_side.get_active_immutable().ability == Abilities::PRESSURE
-        {
-            2
-        } else {
-            1
-        };
-        incoming_instructions
-            .instruction_list
-            .push(Instruction::DecrementPP(DecrementPPInstruction {
-                side_ref: attacking_side,
-                move_index: choice.move_index,
-                amount: pp_decrement_amount,
-            }));
-        active.moves[&choice.move_index].pp -= pp_decrement_amount;
-    }
+    let pp_decrement_amount = if choice.target == MoveTarget::Opponent
+        && defender_side.get_active_immutable().ability == Abilities::PRESSURE
+    {
+        2
+    } else {
+        1
+    };
+    incoming_instructions
+        .instruction_list
+        .push(Instruction::DecrementPP(DecrementPPInstruction {
+            side_ref: attacking_side,
+            move_index: choice.move_index,
+            amount: pp_decrement_amount,
+        }));
+    active.moves[&choice.move_index].pp -= pp_decrement_amount;
 
     if state.use_last_used_move {
         set_last_used_move_as_move(

@@ -8,10 +8,13 @@ use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
 use crate::mcts_noheal::perform_mcts_nh;
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
+use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
 use clap::Parser;
+use std::fs;
 use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -39,6 +42,17 @@ enum SubCommand {
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     InspectStateAndObservation(InspectStateAndObservation),
+    SelfPlay(SelfPlay),
+}
+
+#[derive(Parser)]
+pub struct SelfPlay {
+    #[clap(long)]
+    pub data_file: String,
+    #[clap(long)]
+    pub output_file: Option<String>,
+    #[clap(long)]
+    pub num_games: Option<usize>,
 }
 
 #[derive(Parser)]
@@ -595,6 +609,39 @@ pub fn main() {
             exit(0);
         }
         Some(subcmd) => match subcmd {
+            SubCommand::SelfPlay(args) => {
+                let data_dir = PathBuf::from("data");
+                let random_teams_path = data_dir.join("random_teams.json");
+                let pokedex_path = data_dir.join("pokedex.json");
+                let random_teams = fs::read_to_string(random_teams_path).unwrap();
+                let pokedex = fs::read_to_string(pokedex_path).unwrap();
+
+                let data_path = std::env::current_dir().unwrap().join(args.data_file);
+                println!("Writing training data to: {}", data_path.display());
+
+                // Create log directory if logging is requested
+                let log_dir = args.output_file.map(|_| {
+                    let log_dir = std::env::current_dir().unwrap().join("logs").join(format!(
+                        "selfplay_{}",
+                        chrono::Local::now().format("%Y%m%d_%H%M%S")
+                    ));
+                    fs::create_dir_all(&log_dir).unwrap();
+                    println!("Writing battle logs to: {}", log_dir.display());
+                    log_dir
+                });
+
+                // Create shared writer
+                let writer = Arc::new(SharedFileWriter::new(data_path).unwrap());
+
+                run_sequential_games(
+                    args.num_games.unwrap_or(1),
+                    writer,
+                    &random_teams,
+                    &pokedex,
+                    log_dir,
+                )
+                .unwrap();
+            }
             SubCommand::InspectStateAndObservation(args) => {
                 let state_string =
                     std::fs::read_to_string(&args.input_file).expect("Failed to read input file");

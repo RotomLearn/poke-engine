@@ -74,6 +74,7 @@ pub mod mcts_noheal;
 pub mod observation;
 pub mod pokemon;
 pub mod search;
+pub mod selfplay;
 
 #[macro_export]
 macro_rules! assert_unique_feature {
