@@ -21,7 +21,7 @@ use crate::instruction::{
 use crate::instruction::{DecrementFutureSightInstruction, SetDamageDealtSideTwoInstruction};
 use crate::instruction::{DecrementPPInstruction, SetLastUsedMoveInstruction};
 use crate::instruction::{SetDamageDealtSideOneInstruction, ToggleTerastallizedInstruction};
-use crate::state::PokemonMoveIndex;
+use crate::state::{PokemonMoveIndex, SideMovesFirst};
 
 use crate::damage_calc::calculate_futuresight_damage;
 use crate::items::{
@@ -1031,7 +1031,7 @@ fn set_damage_dealt(
 
 fn generate_instructions_from_damage(
     mut state: &mut State,
-    choice: &Choice,
+    choice: &mut Choice,
     calculated_damage: i16,
     attacking_side_ref: &SideReference,
     mut incoming_instructions: &mut StateInstructions,
@@ -1116,14 +1116,18 @@ fn generate_instructions_from_damage(
 
             hit_sub = true;
         } else {
+            let has_endure = defending_side
+                .volatile_statuses
+                .contains(&PokemonVolatileStatus::ENDURE);
             let attacking_pokemon = attacking_side.get_active();
             let defending_pokemon = defending_side.get_active();
             let mut knocked_out = false;
             damage_dealt = cmp::min(calculated_damage, defending_pokemon.hp);
             if damage_dealt != 0 {
-                if (defending_pokemon.ability == Abilities::STURDY
-                    || defending_pokemon.item == Items::FOCUSSASH)
-                    && defending_pokemon.maxhp == defending_pokemon.hp
+                if has_endure
+                    || ((defending_pokemon.ability == Abilities::STURDY
+                        || defending_pokemon.item == Items::FOCUSSASH)
+                        && defending_pokemon.maxhp == defending_pokemon.hp)
                 {
                     damage_dealt -= 1;
                 }
@@ -2122,6 +2126,10 @@ fn modify_choice_priority(state: &State, side_reference: &SideReference, choice:
     let side = state.get_side_immutable(side_reference);
     let active_pkmn = side.get_active_immutable();
 
+    if choice.move_id == Choices::GRASSYGLIDE && state.terrain_is_active(&Terrain::GRASSYTERRAIN) {
+        choice.priority += 1;
+    }
+
     match active_pkmn.ability {
         Abilities::PRANKSTER if choice.category == MoveCategory::Status => choice.priority += 1,
         Abilities::GALEWINGS
@@ -2134,18 +2142,36 @@ fn modify_choice_priority(state: &State, side_reference: &SideReference, choice:
     }
 }
 
-fn side_one_moves_first(state: &State, side_one_choice: &Choice, side_two_choice: &Choice) -> bool {
+fn moves_first(
+    state: &State,
+    side_one_choice: &Choice,
+    side_two_choice: &Choice,
+) -> SideMovesFirst {
     let side_one_effective_speed = get_effective_speed(&state, &SideReference::SideOne);
     let side_two_effective_speed = get_effective_speed(&state, &SideReference::SideTwo);
 
     if side_one_choice.category == MoveCategory::Switch
         && side_two_choice.category == MoveCategory::Switch
     {
-        return side_one_effective_speed > side_two_effective_speed;
+        return if side_one_effective_speed > side_two_effective_speed {
+            SideMovesFirst::SideOne
+        } else if side_one_effective_speed == side_two_effective_speed {
+            SideMovesFirst::SpeedTie
+        } else {
+            SideMovesFirst::SideTwo
+        };
     } else if side_one_choice.category == MoveCategory::Switch {
-        return side_two_choice.move_id != Choices::PURSUIT;
+        return if side_two_choice.move_id != Choices::PURSUIT {
+            SideMovesFirst::SideOne
+        } else {
+            SideMovesFirst::SideTwo
+        };
     } else if side_two_choice.category == MoveCategory::Switch {
-        return side_one_choice.move_id == Choices::PURSUIT;
+        return if side_one_choice.move_id == Choices::PURSUIT {
+            SideMovesFirst::SideOne
+        } else {
+            SideMovesFirst::SideTwo
+        };
     }
 
     let side_one_active = state.side_one.get_active_immutable();
@@ -2154,34 +2180,47 @@ fn side_one_moves_first(state: &State, side_one_choice: &Choice, side_two_choice
         if side_one_active.item == Items::CUSTAPBERRY
             && side_one_active.hp < side_one_active.maxhp / 4
         {
-            return true;
+            return SideMovesFirst::SideOne;
         } else if side_two_active.item == Items::CUSTAPBERRY
             && side_two_active.hp < side_two_active.maxhp / 4
         {
-            return false;
+            return SideMovesFirst::SideTwo;
         }
+
+        if side_one_effective_speed == side_two_effective_speed {
+            return SideMovesFirst::SpeedTie;
+        }
+
         match state.trick_room.active {
-            true => return side_one_effective_speed < side_two_effective_speed,
-            false => side_one_effective_speed > side_two_effective_speed,
+            true => {
+                if side_one_effective_speed < side_two_effective_speed {
+                    SideMovesFirst::SideOne
+                } else {
+                    SideMovesFirst::SideTwo
+                }
+            }
+            false => {
+                if side_one_effective_speed > side_two_effective_speed {
+                    SideMovesFirst::SideOne
+                } else {
+                    SideMovesFirst::SideTwo
+                }
+            }
         }
     } else {
-        side_one_choice.priority > side_two_choice.priority
+        if side_one_choice.priority > side_two_choice.priority {
+            SideMovesFirst::SideOne
+        } else {
+            SideMovesFirst::SideTwo
+        }
     }
 }
 
 fn add_end_of_turn_instructions(
     state: &mut State,
     mut incoming_instructions: &mut StateInstructions,
-    _side_one_choice: &Choice,
-    _side_two_choice: &Choice,
     first_move_side: &SideReference,
 ) {
-    /*
-    Methodology:
-        This function is deterministic and will not branch.
-        It will apply instructions to the state as it goes, and then reverse them at the end.
-    */
-
     state.apply_instructions(&incoming_instructions.instruction_list);
     if state.side_one.force_switch || state.side_two.force_switch {
         state.reverse_instructions(&incoming_instructions.instruction_list);
@@ -2727,6 +2766,7 @@ fn add_end_of_turn_instructions(
             PokemonVolatileStatus::BURNINGBULWARK,
             PokemonVolatileStatus::SPIKYSHIELD,
             PokemonVolatileStatus::SILKTRAP,
+            PokemonVolatileStatus::ENDURE,
         ];
 
         let mut protect_vs = None;
@@ -2786,7 +2826,7 @@ fn run_move(
     hit_count: i8,
     does_damage: bool,
     damage_amount: i16,
-    choice: &Choice,
+    choice: &mut Choice,
     defender_choice: &Choice,
     final_instructions: &mut Vec<StateInstructions>,
 ) {
@@ -2795,7 +2835,7 @@ fn run_move(
         if does_damage {
             hit_sub = generate_instructions_from_damage(
                 state,
-                &choice,
+                choice,
                 damage_amount,
                 &attacking_side,
                 &mut instructions,
@@ -2965,24 +3005,49 @@ fn run_move(
     }
 }
 
+fn handle_both_moves(
+    state: &mut State,
+    first_move_side_choice: &mut Choice,
+    second_move_side_choice: &mut Choice,
+    first_move_side_ref: SideReference,
+    incoming_instructions: StateInstructions,
+    state_instructions_vec: &mut Vec<StateInstructions>,
+    branch_on_damage: bool,
+) {
+    generate_instructions_from_move(
+        state,
+        first_move_side_choice,
+        second_move_side_choice,
+        first_move_side_ref,
+        incoming_instructions,
+        state_instructions_vec,
+        branch_on_damage,
+    );
+
+    let mut i = 0;
+    let vec_len = state_instructions_vec.len();
+    second_move_side_choice.first_move = false;
+    while i < vec_len {
+        let state_instruction = state_instructions_vec.remove(0);
+        generate_instructions_from_move(
+            state,
+            &mut second_move_side_choice.clone(), // this clone is needed because the choice may be modified in this loop
+            first_move_side_choice,
+            first_move_side_ref.get_other_side(),
+            state_instruction,
+            state_instructions_vec,
+            branch_on_damage,
+        );
+        i += 1;
+    }
+}
+
 pub fn generate_instructions_from_move_pair(
     state: &mut State,
     side_one_move: &MoveChoice,
     side_two_move: &MoveChoice,
     branch_on_damage: bool,
 ) -> Vec<StateInstructions> {
-    /*
-    - get Choice structs from moves
-    - determine who moves first
-    - initialize empty instructions
-    - run move 1
-    - run move 2
-    - run end of turn instructions
-
-    NOTE: End of turn instructions will need to generate the removing of certain volatile statuses, like flinched.
-          This was done elsewhere in the other bot, but it should be here instead
-    */
-
     let mut side_one_choice;
     let mut s1_tera = false;
     match side_one_move {
@@ -3052,77 +3117,83 @@ pub fn generate_instructions_from_move_pair(
             ));
     }
 
-    let first_move_side;
     modify_choice_priority(&state, &SideReference::SideOne, &mut side_one_choice);
     modify_choice_priority(&state, &SideReference::SideTwo, &mut side_two_choice);
-    if side_one_moves_first(&state, &side_one_choice, &side_two_choice) {
-        first_move_side = SideReference::SideOne;
-        generate_instructions_from_move(
-            state,
-            &mut side_one_choice,
-            &side_two_choice,
-            SideReference::SideOne,
-            incoming_instructions,
-            &mut state_instructions_vec,
-            branch_on_damage,
-        );
-        side_two_choice.first_move = false;
-        let mut i = 0;
-        let vec_len = state_instructions_vec.len();
-        while i < vec_len {
-            let state_instruction = state_instructions_vec.remove(0);
-            generate_instructions_from_move(
+    match moves_first(&state, &side_one_choice, &side_two_choice) {
+        SideMovesFirst::SideOne => {
+            handle_both_moves(
                 state,
-                &mut side_two_choice.clone(),
-                &side_one_choice,
-                SideReference::SideTwo,
-                state_instruction,
-                &mut state_instructions_vec,
-                branch_on_damage,
-            );
-            i += 1;
-        }
-    } else {
-        first_move_side = SideReference::SideTwo;
-        generate_instructions_from_move(
-            state,
-            &mut side_two_choice,
-            &side_one_choice,
-            SideReference::SideTwo,
-            incoming_instructions,
-            &mut state_instructions_vec,
-            branch_on_damage,
-        );
-        side_one_choice.first_move = false;
-        let mut i = 0;
-        let vec_len = state_instructions_vec.len();
-        while i < vec_len {
-            let state_instruction = state_instructions_vec.remove(0);
-            generate_instructions_from_move(
-                state,
-                &mut side_one_choice.clone(),
-                &side_two_choice,
+                &mut side_one_choice,
+                &mut side_two_choice,
                 SideReference::SideOne,
-                state_instruction,
+                incoming_instructions,
                 &mut state_instructions_vec,
                 branch_on_damage,
             );
-            i += 1;
+            if end_of_turn_triggered(side_one_move, side_two_move) {
+                for state_instruction in state_instructions_vec.iter_mut() {
+                    add_end_of_turn_instructions(state, state_instruction, &SideReference::SideOne);
+                }
+            }
         }
-    }
-
-    if end_of_turn_triggered(side_one_move, side_two_move) {
-        for state_instruction in state_instructions_vec.iter_mut() {
-            add_end_of_turn_instructions(
+        SideMovesFirst::SideTwo => {
+            handle_both_moves(
                 state,
-                state_instruction,
-                &side_one_choice,
-                &side_two_choice,
-                &first_move_side,
+                &mut side_two_choice,
+                &mut side_one_choice,
+                SideReference::SideTwo,
+                incoming_instructions,
+                &mut state_instructions_vec,
+                branch_on_damage,
             );
+            if end_of_turn_triggered(side_one_move, side_two_move) {
+                for state_instruction in state_instructions_vec.iter_mut() {
+                    add_end_of_turn_instructions(state, state_instruction, &SideReference::SideTwo);
+                }
+            }
+        }
+        SideMovesFirst::SpeedTie => {
+            let mut side_one_moves_first_instruction = incoming_instructions.clone();
+            incoming_instructions.update_percentage(0.5);
+            side_one_moves_first_instruction.update_percentage(0.5);
+
+            // side_one moves first
+            handle_both_moves(
+                state,
+                &mut side_one_choice,
+                &mut side_two_choice,
+                SideReference::SideOne,
+                side_one_moves_first_instruction,
+                &mut state_instructions_vec,
+                branch_on_damage,
+            );
+            if end_of_turn_triggered(side_one_move, side_two_move) {
+                for state_instruction in state_instructions_vec.iter_mut() {
+                    add_end_of_turn_instructions(state, state_instruction, &SideReference::SideOne);
+                }
+            }
+
+            // side_two moves first
+            let mut side_two_moves_first_si = Vec::with_capacity(16);
+            handle_both_moves(
+                state,
+                &mut side_two_choice,
+                &mut side_one_choice,
+                SideReference::SideTwo,
+                incoming_instructions,
+                &mut side_two_moves_first_si,
+                branch_on_damage,
+            );
+            if end_of_turn_triggered(side_one_move, side_two_move) {
+                for state_instruction in side_two_moves_first_si.iter_mut() {
+                    add_end_of_turn_instructions(state, state_instruction, &SideReference::SideTwo);
+                }
+            }
+
+            // combine both vectors into the final vector
+            state_instructions_vec.extend(side_two_moves_first_si);
         }
     }
-
     state_instructions_vec
 }
 
@@ -7918,8 +7989,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -7934,8 +8005,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -7953,8 +8024,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -7972,8 +8043,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -7987,8 +8058,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8003,8 +8074,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8021,8 +8092,8 @@ mod tests {
             .insert(PokemonVolatileStatus::SLOWSTART);
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8035,8 +8106,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8051,8 +8122,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8103,8 +8174,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SpeedTie,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8117,8 +8188,8 @@ mod tests {
         state.side_two.get_active().speed = 101;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8131,8 +8202,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8145,8 +8216,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8160,8 +8231,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8177,8 +8248,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            false,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideTwo,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8193,8 +8264,8 @@ mod tests {
         state.side_two.get_active().speed = 100;
 
         assert_eq!(
-            true,
-            side_one_moves_first(&state, &side_one_choice, &side_two_choice)
+            SideMovesFirst::SideOne,
+            moves_first(&state, &side_one_choice, &side_two_choice)
         )
     }
 
@@ -8207,8 +8278,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8239,8 +8308,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8267,8 +8334,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8299,8 +8364,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8327,8 +8390,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8359,8 +8420,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8386,8 +8445,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8417,8 +8474,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8448,8 +8503,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8473,8 +8526,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8498,8 +8549,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8523,8 +8572,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8549,8 +8596,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8575,8 +8620,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8598,8 +8641,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8622,8 +8663,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8648,8 +8687,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8675,8 +8712,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8700,8 +8735,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8727,8 +8760,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8749,8 +8780,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8777,8 +8806,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8801,8 +8828,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8828,8 +8853,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8854,8 +8877,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8876,8 +8897,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8903,8 +8922,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8925,8 +8942,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8951,8 +8966,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -8977,8 +8990,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9003,8 +9014,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9029,8 +9038,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9056,8 +9063,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9078,8 +9083,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9115,8 +9118,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9151,8 +9152,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9181,8 +9180,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9217,8 +9214,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9251,8 +9246,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9283,8 +9276,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9314,8 +9305,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9344,8 +9333,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 
@@ -9383,8 +9370,6 @@ mod tests {
         add_end_of_turn_instructions(
             &mut state,
             &mut incoming_instructions,
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
-            &MOVES.get(&Choices::TACKLE).unwrap().to_owned(),
             &SideReference::SideOne,
         );
 

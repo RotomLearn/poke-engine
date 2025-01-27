@@ -5,8 +5,8 @@ use crate::generate_instructions::{add_remove_status_instructions, get_boost_ins
 use crate::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
     ChangeSideConditionInstruction, ChangeStatusInstruction, ChangeSubsituteHealthInstruction,
-    ChangeTerrain, ChangeWeather, ChangeWishInstruction, DamageInstruction, HealInstruction,
-    Instruction, RemoveVolatileStatusInstruction, SetFutureSightInstruction,
+    ChangeTerrain, ChangeType, ChangeWeather, ChangeWishInstruction, DamageInstruction,
+    HealInstruction, Instruction, RemoveVolatileStatusInstruction, SetFutureSightInstruction,
     SetSleepTurnsInstruction, StateInstructions, ToggleTrickRoomInstruction,
 };
 use crate::items::{get_choice_move_disable_instructions, Items};
@@ -26,6 +26,22 @@ pub fn modify_choice(
 ) {
     let (attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     match attacker_choice.move_id {
+        Choices::DOUBLESHOCK => {
+            if !attacking_side
+                .get_active_immutable()
+                .has_type(&PokemonType::ELECTRIC)
+            {
+                attacker_choice.remove_all_effects();
+            }
+        }
+        Choices::BURNUP => {
+            if !attacking_side
+                .get_active_immutable()
+                .has_type(&PokemonType::FIRE)
+            {
+                attacker_choice.remove_all_effects();
+            }
+        }
         Choices::REVERSAL => {
             let attacker = attacking_side.get_active_immutable();
             let hp_ratio = attacker.hp as f32 / attacker.maxhp as f32;
@@ -147,7 +163,7 @@ pub fn modify_choice(
                 });
             }
         }
-        Choices::FAKEOUT => match attacking_side.last_used_move {
+        Choices::FAKEOUT | Choices::FIRSTIMPRESSION => match attacking_side.last_used_move {
             LastUsedMove::Move(_) => attacker_choice.remove_all_effects(),
             _ => {}
         },
@@ -222,7 +238,12 @@ pub fn modify_choice(
                 attacker_choice.base_power = 0.0;
             }
         }
-        Choices::PROTECT => {
+        Choices::PROTECT
+        | Choices::BANEFULBUNKER
+        | Choices::BURNINGBULWARK
+        | Choices::SPIKYSHIELD
+        | Choices::SILKTRAP
+        | Choices::ENDURE => {
             if attacking_side.side_conditions.protect > 0 {
                 // for now, the engine doesn't support consecutive protects
                 // 2nd protect will always fail
@@ -566,6 +587,76 @@ pub fn choice_after_damage_hit(
             .insert(PokemonVolatileStatus::TRUANT);
     }
     match choice.move_id {
+        Choices::DOUBLESHOCK => {
+            let attacker_active = attacking_side.get_active_immutable();
+            let instruction = if attacker_active.types.0 == PokemonType::ELECTRIC {
+                Some(Instruction::ChangeType(ChangeType {
+                    side_ref: *attacking_side_ref,
+                    new_types: (PokemonType::TYPELESS, attacker_active.types.1),
+                    old_types: attacker_active.types,
+                }))
+            } else if attacker_active.types.1 == PokemonType::ELECTRIC {
+                Some(Instruction::ChangeType(ChangeType {
+                    side_ref: *attacking_side_ref,
+                    new_types: (attacker_active.types.0, PokemonType::TYPELESS),
+                    old_types: attacker_active.types,
+                }))
+            } else {
+                None
+            };
+            if let Some(typechange_instruction) = instruction {
+                if !attacking_side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::TYPECHANGE)
+                {
+                    instructions
+                        .instruction_list
+                        .push(Instruction::ApplyVolatileStatus(
+                            ApplyVolatileStatusInstruction {
+                                side_ref: attacking_side_ref.clone(),
+                                volatile_status: PokemonVolatileStatus::TYPECHANGE,
+                            },
+                        ));
+                }
+                state.apply_one_instruction(&typechange_instruction);
+                instructions.instruction_list.push(typechange_instruction);
+            }
+        }
+        Choices::BURNUP => {
+            let attacker_active = attacking_side.get_active_immutable();
+            let instruction = if attacker_active.types.0 == PokemonType::FIRE {
+                Some(Instruction::ChangeType(ChangeType {
+                    side_ref: *attacking_side_ref,
+                    new_types: (PokemonType::TYPELESS, attacker_active.types.1),
+                    old_types: attacker_active.types,
+                }))
+            } else if attacker_active.types.1 == PokemonType::FIRE {
+                Some(Instruction::ChangeType(ChangeType {
+                    side_ref: *attacking_side_ref,
+                    new_types: (attacker_active.types.0, PokemonType::TYPELESS),
+                    old_types: attacker_active.types,
+                }))
+            } else {
+                None
+            };
+            if let Some(typechange_instruction) = instruction {
+                if !attacking_side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::TYPECHANGE)
+                {
+                    instructions
+                        .instruction_list
+                        .push(Instruction::ApplyVolatileStatus(
+                            ApplyVolatileStatusInstruction {
+                                side_ref: attacking_side_ref.clone(),
+                                volatile_status: PokemonVolatileStatus::TYPECHANGE,
+                            },
+                        ));
+                }
+                state.apply_one_instruction(&typechange_instruction);
+                instructions.instruction_list.push(typechange_instruction);
+            }
+        }
         Choices::RAGINGBULL => {
             if defending_side.side_conditions.reflect > 0 {
                 instructions
@@ -825,7 +916,7 @@ pub fn choice_hazard_clear(
     attacking_side_ref: &SideReference,
     instructions: &mut StateInstructions,
 ) {
-    let (attacking_side, _defending_side) = state.get_both_sides(attacking_side_ref);
+    let (attacking_side, defending_side) = state.get_both_sides(attacking_side_ref);
     match choice.move_id {
         Choices::COURTCHANGE => {
             let mut instruction_list = vec![];
@@ -868,7 +959,9 @@ pub fn choice_hazard_clear(
                 instructions.instruction_list.push(i)
             }
         }
-        Choices::DEFOG => {
+        Choices::DEFOG
+            if defending_side.get_active_immutable().ability != Abilities::GOODASGOLD =>
+        {
             if state.terrain.terrain_type != Terrain::NONE {
                 instructions
                     .instruction_list
