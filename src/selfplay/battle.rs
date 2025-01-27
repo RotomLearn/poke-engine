@@ -471,11 +471,13 @@ pub fn run_sequential_games(
     writer: Arc<SharedFileWriter>,
     random_teams: &str,
     pokedex: &str,
+    movedex_json: &str,
     log_dir: Option<PathBuf>,
 ) -> io::Result<()> {
     for game_idx in 0..num_games {
         // Initialize new game
-        let mut state = initialization::initialize_battle_state(random_teams, pokedex);
+        let mut state =
+            initialization::initialize_battle_state(random_teams, pokedex, movedex_json);
         state = State::deserialize(state.serialize().as_str());
 
         let player1 = Box::new(MctsPlayer::new(Duration::from_millis(100)));

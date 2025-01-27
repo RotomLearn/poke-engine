@@ -10,6 +10,7 @@ use crate::state::{
 };
 use deunicode::deunicode;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
 
@@ -71,6 +72,13 @@ struct PackedPokemon {
     shiny: bool,
     level: u8,
     tera_type: String,
+}
+
+#[derive(Deserialize)]
+struct MoveDexEntry {
+    pp: i8,
+    #[serde(flatten)]
+    _other: HashMap<String, serde_json::Value>,
 }
 
 fn parse_packed_team(packed_team: &str) -> Vec<PackedPokemon> {
@@ -156,16 +164,16 @@ fn parse_packed_team(packed_team: &str) -> Vec<PackedPokemon> {
 
 fn create_pokemon(
     packed: &PackedPokemon,
-    pokedex: &std::collections::HashMap<String, PokemonDexEntry>,
+    pokedex: &HashMap<String, PokemonDexEntry>,
+    movedex: &HashMap<String, MoveDexEntry>,
 ) -> Pokemon {
-    // Use species if present, otherwise use nickname for pokedex lookup
+    // Previous pokedex lookup logic remains the same
     let pokemon_name = packed.species.as_ref().unwrap_or(&packed.nickname);
-
     let dex_entry = pokedex
         .get(pokemon_name)
         .unwrap_or_else(|| panic!("Pokemon not found in pokedex: {}", pokemon_name));
 
-    // Convert types
+    // Type conversion remains the same
     let type1 =
         PokemonType::from_str(&normalize_name(&dex_entry.types[0])).unwrap_or(PokemonType::NORMAL);
     let type2 = if dex_entry.types.len() > 1 {
@@ -183,47 +191,34 @@ fn create_pokemon(
         m5: Move::default(),
     };
 
-    // Set up moves with normalized names
+    // Set up moves with PP from movedex
     for (i, move_name) in packed.moves.iter().enumerate() {
         let normalized_move = normalize_name(move_name);
         let move_choice = Choices::from_str(&normalized_move).unwrap_or(Choices::NONE);
+
+        // Look up PP in movedex, default to 32 if not found
+        let pp = movedex
+            .get(&normalized_move)
+            .map(|entry| (entry.pp as f32 * 1.6) as i8)
+            .unwrap_or(32);
+
+        let move_data = Move {
+            id: move_choice,
+            disabled: false,
+            pp,
+            choice: Default::default(),
+        };
+
         match i {
-            0 => {
-                moves.m0 = Move {
-                    id: move_choice,
-                    disabled: false,
-                    pp: 32,
-                    choice: Default::default(),
-                }
-            }
-            1 => {
-                moves.m1 = Move {
-                    id: move_choice,
-                    disabled: false,
-                    pp: 32,
-                    choice: Default::default(),
-                }
-            }
-            2 => {
-                moves.m2 = Move {
-                    id: move_choice,
-                    disabled: false,
-                    pp: 32,
-                    choice: Default::default(),
-                }
-            }
-            3 => {
-                moves.m3 = Move {
-                    id: move_choice,
-                    disabled: false,
-                    pp: 32,
-                    choice: Default::default(),
-                }
-            }
+            0 => moves.m0 = move_data,
+            1 => moves.m1 = move_data,
+            2 => moves.m2 = move_data,
+            3 => moves.m3 = move_data,
             _ => break,
         }
     }
 
+    // Rest of the Pokemon creation remains the same
     Pokemon {
         id: PokemonName::from_str(
             &packed
@@ -280,46 +275,51 @@ fn create_pokemon(
     }
 }
 
-pub fn initialize_battle_state(random_teams_json: &str, pokedex_json: &str) -> State {
+pub fn initialize_battle_state(
+    random_teams_json: &str,
+    pokedex_json: &str,
+    movedex_json: &str,
+) -> State {
     let random_teams: Vec<PackedTeamEntry> =
         serde_json::from_str(random_teams_json).expect("Failed to parse random teams JSON");
 
-    let pokedex: std::collections::HashMap<String, PokemonDexEntry> =
+    let pokedex: HashMap<String, PokemonDexEntry> =
         serde_json::from_str(pokedex_json).expect("Failed to parse pokedex JSON");
 
-    // Randomly select two teams
+    let movedex: HashMap<String, MoveDexEntry> =
+        serde_json::from_str(movedex_json).expect("Failed to parse movedex JSON");
+
+    // Team selection logic remains the same
     use rand::seq::SliceRandom;
     let mut rng = rand::thread_rng();
     let selected_teams: Vec<_> = random_teams.choose_multiple(&mut rng, 2).collect();
 
-    // Parse both teams
     let team1 = parse_packed_team(&selected_teams[0].packed_team);
     let team2 = parse_packed_team(&selected_teams[1].packed_team);
 
-    // Verify team sizes
     assert_eq!(team1.len(), 6, "Team 1 doesn't have 6 Pokemon: {:?}", team1);
     assert_eq!(team2.len(), 6, "Team 2 doesn't have 6 Pokemon: {:?}", team2);
 
-    // Create Pokemon for both sides
+    // Create Pokemon with movedex
     let side_one_pokemon = SidePokemon {
-        p0: create_pokemon(&team1[0], &pokedex),
-        p1: create_pokemon(&team1[1], &pokedex),
-        p2: create_pokemon(&team1[2], &pokedex),
-        p3: create_pokemon(&team1[3], &pokedex),
-        p4: create_pokemon(&team1[4], &pokedex),
-        p5: create_pokemon(&team1[5], &pokedex),
+        p0: create_pokemon(&team1[0], &pokedex, &movedex),
+        p1: create_pokemon(&team1[1], &pokedex, &movedex),
+        p2: create_pokemon(&team1[2], &pokedex, &movedex),
+        p3: create_pokemon(&team1[3], &pokedex, &movedex),
+        p4: create_pokemon(&team1[4], &pokedex, &movedex),
+        p5: create_pokemon(&team1[5], &pokedex, &movedex),
     };
 
     let side_two_pokemon = SidePokemon {
-        p0: create_pokemon(&team2[0], &pokedex),
-        p1: create_pokemon(&team2[1], &pokedex),
-        p2: create_pokemon(&team2[2], &pokedex),
-        p3: create_pokemon(&team2[3], &pokedex),
-        p4: create_pokemon(&team2[4], &pokedex),
-        p5: create_pokemon(&team2[5], &pokedex),
+        p0: create_pokemon(&team2[0], &pokedex, &movedex),
+        p1: create_pokemon(&team2[1], &pokedex, &movedex),
+        p2: create_pokemon(&team2[2], &pokedex, &movedex),
+        p3: create_pokemon(&team2[3], &pokedex, &movedex),
+        p4: create_pokemon(&team2[4], &pokedex, &movedex),
+        p5: create_pokemon(&team2[5], &pokedex, &movedex),
     };
 
-    // Create the sides
+    // Rest of the state initialization remains the same
     let side_one = Side {
         active_index: PokemonIndex::P0,
         baton_passing: false,
@@ -368,7 +368,6 @@ pub fn initialize_battle_state(random_teams_json: &str, pokedex_json: &str) -> S
         switch_out_move_second_saved_move: Choices::NONE,
     };
 
-    // Create and return the final state
     State {
         side_one,
         side_two,

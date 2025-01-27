@@ -613,8 +613,10 @@ pub fn main() {
                 let data_dir = PathBuf::from("data");
                 let random_teams_path = data_dir.join("random_teams.json");
                 let pokedex_path = data_dir.join("pokedex.json");
+                let moves_path = data_dir.join("moves.json");
                 let random_teams = fs::read_to_string(random_teams_path).unwrap();
                 let pokedex = fs::read_to_string(pokedex_path).unwrap();
+                let movedex = fs::read_to_string(moves_path).unwrap();
 
                 let data_path = std::env::current_dir().unwrap().join(args.data_file);
                 println!("Writing training data to: {}", data_path.display());
@@ -638,6 +640,7 @@ pub fn main() {
                     writer,
                     &random_teams,
                     &pokedex,
+                    &movedex,
                     log_dir,
                 )
                 .unwrap();
