@@ -86,6 +86,8 @@ fn write_pokemon_details(output: &mut String, pokemon: &Pokemon, side: &Side) {
     )
     .unwrap();
     writeln!(output, "Status: {:?}", pokemon.status).unwrap();
+    writeln!(output, "Terastallized: {}", pokemon.terastallized).unwrap();
+    writeln!(output, "Tera Type: {:?}", pokemon.tera_type).unwrap();
 
     writeln!(output, "Moves:").unwrap();
     for m in pokemon.moves.into_iter().take(4) {
@@ -109,7 +111,6 @@ fn write_pokemon_details(output: &mut String, pokemon: &Pokemon, side: &Side) {
         }
     }
 }
-
 pub fn inspect_observation(obs: &[f32], side_ref: SideReference) -> String {
     let mut output = String::new();
     let mut pos = 0;
@@ -251,6 +252,16 @@ pub fn inspect_observation(obs: &[f32], side_ref: SideReference) -> String {
             ("Move 4 ID", 1, "Move ID number"),
             ("Move 4 PP", 4, "PP bins (0-3)"),
             ("Types", 20, "One-hot encoded types (positions 0-19)"),
+            (
+                "Terastallized",
+                2,
+                "Not Terastallized (0) or Terastallized (1)",
+            ),
+            (
+                "Tera Type",
+                20,
+                "One-hot encoded tera type (positions 0-19)",
+            ),
             (
                 "HP",
                 HP_BINS + 1,

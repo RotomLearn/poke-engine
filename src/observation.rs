@@ -69,6 +69,14 @@ fn encode_pokemon(pokemon: &Pokemon, side: &Side, is_active: bool) -> Vec<f32> {
     }
     vec.extend(type_vec);
 
+    // Terastallized status (2 values - binary flag)
+    vec.extend(encode_onehot(if pokemon.terastallized { 1 } else { 0 }, 2));
+
+    // Tera type (20 binary values for possible tera type)
+    let mut tera_type_vec = vec![0.0; 20];
+    tera_type_vec[pokemon.tera_type as usize] = 1.0;
+    vec.extend(tera_type_vec);
+
     // HP fraction (HP_BINS + 1 bins)
     vec.extend(encode_onehot(
         get_hp_bin(pokemon.hp, pokemon.maxhp),
