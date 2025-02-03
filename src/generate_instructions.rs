@@ -133,7 +133,7 @@ fn generate_instructions_from_switch(
     let should_last_used_move = state.use_last_used_move;
     state.apply_instructions(&incoming_instructions.instruction_list);
 
-    let side = state.get_side(&switching_side_ref);
+    let (side, opposite_side) = state.get_both_sides(&switching_side_ref);
     if side.force_switch {
         side.force_switch = false;
         match switching_side_ref {
@@ -203,6 +203,23 @@ fn generate_instructions_from_switch(
                 }));
             active.sleep_turns = 0
         }
+    }
+
+    if opposite_side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
+    {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::RemoveVolatileStatus(
+                RemoveVolatileStatusInstruction {
+                    side_ref: switching_side_ref.get_other_side(),
+                    volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
+                },
+            ));
+        opposite_side
+            .volatile_statuses
+            .remove(&PokemonVolatileStatus::PARTIALLYTRAPPED);
     }
 
     state.re_enable_disabled_moves(
@@ -6630,6 +6647,7 @@ mod tests {
         let mut state: State = State::default();
         state.side_one.get_active().hp -= 10;
         state.side_one.get_active().ability = Abilities::REGENERATOR;
+        state.side_one.get_active().base_ability = Abilities::REGENERATOR;
         let mut choice = Choice {
             ..Default::default()
         };
@@ -6691,6 +6709,7 @@ mod tests {
         };
         state.side_one.get_active().hp -= 10;
         state.side_one.get_active().ability = Abilities::REGENERATOR;
+        state.side_one.get_active().base_ability = Abilities::REGENERATOR;
         let mut choice = Choice {
             ..Default::default()
         };
@@ -6739,6 +6758,7 @@ mod tests {
     fn test_switch_with_regenerator_but_no_damage_taken() {
         let mut state: State = State::default();
         state.side_one.get_active().ability = Abilities::REGENERATOR;
+        state.side_one.get_active().base_ability = Abilities::REGENERATOR;
         let mut choice = Choice {
             ..Default::default()
         };
@@ -6769,6 +6789,7 @@ mod tests {
     fn test_fainted_pokemon_with_regenerator_does_not_heal() {
         let mut state: State = State::default();
         state.side_one.get_active().ability = Abilities::REGENERATOR;
+        state.side_one.get_active().base_ability = Abilities::REGENERATOR;
         state.side_one.get_active().hp = 0;
         let mut choice = Choice {
             ..Default::default()
@@ -6800,6 +6821,7 @@ mod tests {
     fn test_regenerator_only_heals_one_third() {
         let mut state: State = State::default();
         state.side_one.get_active().ability = Abilities::REGENERATOR;
+        state.side_one.get_active().base_ability = Abilities::REGENERATOR;
         state.side_one.get_active().hp = 3;
         let mut choice = Choice {
             ..Default::default()
@@ -6837,6 +6859,7 @@ mod tests {
     fn test_naturalcure() {
         let mut state: State = State::default();
         state.side_one.get_active().ability = Abilities::NATURALCURE;
+        state.side_one.get_active().base_ability = Abilities::NATURALCURE;
         state.side_one.get_active().status = PokemonStatus::PARALYZE;
         let mut choice = Choice {
             ..Default::default()
@@ -6876,6 +6899,7 @@ mod tests {
     fn test_naturalcure_with_no_status() {
         let mut state: State = State::default();
         state.side_one.get_active().ability = Abilities::NATURALCURE;
+        state.side_one.get_active().base_ability = Abilities::NATURALCURE;
         state.side_one.get_active().status = PokemonStatus::NONE;
         let mut choice = Choice {
             ..Default::default()

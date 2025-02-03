@@ -45,12 +45,16 @@ class Pokemon:
     :type level: int
     :param types: The types of the Pokemon
     :type types: (str, str)
+    :param base_types: The base types of the Pokemon
+    :type base_types: (str, str)
     :param hp: The current HP of the Pokemon
     :type hp: int
     :param maxhp: The maximum HP of the Pokemon
     :type maxhp: int
     :param ability: The ability of the Pokemon
     :type ability: str
+    :param base_ability: The base ability of the Pokemon
+    :type base_ability: str
     :param item: The item held by the Pokemon
     :type item: str
     :param nature: The nature of the Pokemon
@@ -86,9 +90,11 @@ class Pokemon:
     id: str = ""
     level: int = 100
     types: (str, str) = ("normal", "typeless")
+    base_types: (str, str) = None
     hp: int = 100
     maxhp: int = 100
     ability: str = "none"
+    base_ability: str = None
     item: str = "none"
     nature: str = "serious"
     evs: tuple[int, int, int, int, int, int] = (85, 85, 85, 85, 85, 85)
@@ -109,13 +115,24 @@ class Pokemon:
         if len(self.types) == 1:
             self.types = (self.types[0], "typeless")
 
+        # base_types default to types
+        if self.base_types is None:
+            self.base_types = self.types
+        elif len(self.base_types) == 1:
+            self.base_types = (self.base_types[0], "typeless")
+
+        if self.base_ability is None:
+            self.base_ability = self.ability
+
         return _Pokemon(
             id=self.id,
             level=self.level,
             types=self.types,
+            base_types=self.base_types,
             hp=self.hp,
             maxhp=self.maxhp,
             ability=self.ability,
+            base_ability=self.base_ability,
             item=self.item,
             nature=self.nature,
             evs=self.evs,
