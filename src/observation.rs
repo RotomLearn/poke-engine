@@ -43,8 +43,8 @@ fn encode_volatile_statuses(observation: &mut Vec<f32>, side: &Side) {
 fn encode_pokemon(pokemon: &Pokemon, side: &Side, is_active: bool) -> Vec<f32> {
     let mut vec = Vec::new();
 
-    // Active flag (2 values)
-    vec.extend(encode_onehot(if is_active { 1 } else { 0 }, 2));
+    // Active flag (1 value)
+    vec.push(is_active as i32 as f32);
 
     // Species (1 value)
     vec.push(pokemon.id as i32 as f32);
@@ -82,14 +82,6 @@ fn encode_pokemon(pokemon: &Pokemon, side: &Side, is_active: bool) -> Vec<f32> {
         get_hp_bin(pokemon.hp, pokemon.maxhp),
         HP_BINS + 1,
     ));
-
-    // Boosts (13 values each, -6 to +6)
-    vec.extend(encode_onehot((side.attack_boost + 6) as usize, 13));
-    vec.extend(encode_onehot((side.defense_boost + 6) as usize, 13));
-    vec.extend(encode_onehot((side.special_attack_boost + 6) as usize, 13));
-    vec.extend(encode_onehot((side.special_defense_boost + 6) as usize, 13));
-    vec.extend(encode_onehot((side.speed_boost + 6) as usize, 13));
-    vec.extend(encode_onehot((side.accuracy_boost + 6) as usize, 13));
 
     // Status conditions (7 binary values)
     let mut status_vec = vec![0.0; 7];
@@ -140,167 +132,164 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
     // Get references to our side and opponent's side
     let (our_side, opponent_side) = state.get_both_sides_immutable(&side_reference);
 
-    // Side conditions for both sides
-    // Aurora Veil (9 turns)
+    // Our Side Conditions (76 values)
     observation.extend(encode_onehot(
         our_side.side_conditions.aurora_veil as usize,
         9,
     ));
     observation.extend(encode_onehot(
-        opponent_side.side_conditions.aurora_veil as usize,
+        our_side.side_conditions.crafty_shield as usize,
+        2,
+    ));
+    observation.extend(encode_onehot(
+        our_side.side_conditions.healing_wish as usize,
+        2,
+    ));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.light_screen as usize,
         9,
     ));
 
-    // Crafty Shield (2 turns)
     observation.extend(encode_onehot(
-        our_side.side_conditions.crafty_shield as usize,
+        our_side.side_conditions.lucky_chant as usize,
+        6,
+    ));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.lunar_dance as usize,
         2,
+    ));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.mat_block as usize,
+        2,
+    ));
+
+    observation.extend(encode_onehot(our_side.side_conditions.mist as usize, 6));
+
+    observation.extend(encode_onehot(our_side.side_conditions.protect as usize, 2));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.quick_guard as usize,
+        2,
+    ));
+
+    observation.extend(encode_onehot(our_side.side_conditions.reflect as usize, 9));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.safeguard as usize,
+        7,
+    ));
+
+    observation.extend(encode_onehot(our_side.side_conditions.spikes as usize, 4));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.stealth_rock as usize,
+        2,
+    ));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.sticky_web as usize,
+        2,
+    ));
+
+    observation.extend(encode_onehot(our_side.side_conditions.tailwind as usize, 5));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.toxic_spikes as usize,
+        3,
+    ));
+
+    observation.extend(encode_onehot(
+        our_side.side_conditions.wide_guard as usize,
+        2,
+    ));
+    // Opponent Side Conditions (76 values)
+
+    observation.extend(encode_onehot(
+        opponent_side.side_conditions.aurora_veil as usize,
+        9,
     ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.crafty_shield as usize,
         2,
     ));
 
-    // Healing Wish (2 presence)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.healing_wish as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.healing_wish as usize,
         2,
     ));
 
-    // Light Screen (9 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.light_screen as usize,
-        9,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.light_screen as usize,
         9,
     ));
 
-    // Lucky Chant (6 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.lucky_chant as usize,
-        6,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.lucky_chant as usize,
         6,
     ));
 
-    // Lunar Dance (2 presence)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.lunar_dance as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.lunar_dance as usize,
         2,
     ));
 
-    // Mat Block (2 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.mat_block as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.mat_block as usize,
         2,
     ));
 
-    // Mist (6 turns)
-    observation.extend(encode_onehot(our_side.side_conditions.mist as usize, 6));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.mist as usize,
         6,
     ));
 
-    // Protect (2 presence)
-    observation.extend(encode_onehot(our_side.side_conditions.protect as usize, 2));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.protect as usize,
         2,
     ));
 
-    // Quick Guard (2 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.quick_guard as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.quick_guard as usize,
         2,
     ));
-
-    // Reflect (9 turns)
-    observation.extend(encode_onehot(our_side.side_conditions.reflect as usize, 9));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.reflect as usize,
         9,
     ));
 
-    // Safeguard (7 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.safeguard as usize,
-        7,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.safeguard as usize,
         7,
     ));
 
-    // Spikes (4 layers)
-    observation.extend(encode_onehot(our_side.side_conditions.spikes as usize, 4));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.spikes as usize,
         4,
     ));
 
-    // Stealth Rock (2 presence)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.stealth_rock as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.stealth_rock as usize,
         2,
     ));
 
-    // Sticky Web (2 presence)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.sticky_web as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.sticky_web as usize,
         2,
     ));
 
-    // Tailwind (5 turns)
-    observation.extend(encode_onehot(our_side.side_conditions.tailwind as usize, 5));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.tailwind as usize,
         5,
     ));
 
-    // Toxic Spikes (3 layers)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.toxic_spikes as usize,
-        3,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.toxic_spikes as usize,
         3,
     ));
 
-    // Wide Guard (2 turns)
-    observation.extend(encode_onehot(
-        our_side.side_conditions.wide_guard as usize,
-        2,
-    ));
     observation.extend(encode_onehot(
         opponent_side.side_conditions.wide_guard as usize,
         2,
@@ -310,6 +299,39 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
     encode_volatile_statuses(&mut observation, our_side);
     encode_volatile_statuses(&mut observation, opponent_side);
 
+    // Boosts (13 values each, -6 to +6)
+    observation.extend(encode_onehot((our_side.attack_boost + 6) as usize, 13));
+    observation.extend(encode_onehot((our_side.defense_boost + 6) as usize, 13));
+    observation.extend(encode_onehot(
+        (our_side.special_attack_boost + 6) as usize,
+        13,
+    ));
+    observation.extend(encode_onehot(
+        (our_side.special_defense_boost + 6) as usize,
+        13,
+    ));
+    observation.extend(encode_onehot((our_side.speed_boost + 6) as usize, 13));
+    observation.extend(encode_onehot((our_side.accuracy_boost + 6) as usize, 13));
+
+    observation.extend(encode_onehot((opponent_side.attack_boost + 6) as usize, 13));
+    observation.extend(encode_onehot(
+        (opponent_side.defense_boost + 6) as usize,
+        13,
+    ));
+    observation.extend(encode_onehot(
+        (opponent_side.special_attack_boost + 6) as usize,
+        13,
+    ));
+    observation.extend(encode_onehot(
+        (opponent_side.special_defense_boost + 6) as usize,
+        13,
+    ));
+    observation.extend(encode_onehot((opponent_side.speed_boost + 6) as usize, 13));
+    observation.extend(encode_onehot(
+        (opponent_side.accuracy_boost + 6) as usize,
+        13,
+    ));
+
     // Encode all Pokémon
     // Active Pokémon first
     observation.extend(encode_pokemon(
@@ -317,13 +339,7 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
         our_side,
         true,
     ));
-    observation.extend(encode_pokemon(
-        opponent_side.get_active_immutable(),
-        opponent_side,
-        true,
-    ));
 
-    // Then rest of the team
     for pokemon_index in pokemon_index_iter() {
         if pokemon_index != our_side.active_index {
             observation.extend(encode_pokemon(
@@ -332,6 +348,15 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
                 false,
             ));
         }
+    }
+    observation.extend(encode_pokemon(
+        opponent_side.get_active_immutable(),
+        opponent_side,
+        true,
+    ));
+
+    // Then rest of the team
+    for pokemon_index in pokemon_index_iter() {
         if pokemon_index != opponent_side.active_index {
             observation.extend(encode_pokemon(
                 &opponent_side.pokemon[pokemon_index],

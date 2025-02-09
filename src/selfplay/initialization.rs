@@ -187,8 +187,6 @@ fn create_pokemon(
         m1: Move::default(),
         m2: Move::default(),
         m3: Move::default(),
-        m4: Move::default(),
-        m5: Move::default(),
     };
 
     // Set up moves with PP from movedex
@@ -230,11 +228,14 @@ fn create_pokemon(
         .unwrap_or(PokemonName::NONE),
         level: 100,
         types: (type1, type2),
+        base_types: (type1, type2),
         hp: ((2 * dex_entry.base_stats.hp + 31 + (packed.evs[0] as u16 / 4)) * 100 / 100 + 110)
             as i16,
         maxhp: ((2 * dex_entry.base_stats.hp + 31 + (packed.evs[0] as u16 / 4)) * 100 / 100 + 110)
             as i16,
         ability: Abilities::from_str(&normalize_name(&packed.ability)).unwrap_or(Abilities::NONE),
+        base_ability: Abilities::from_str(&normalize_name(&packed.ability))
+            .unwrap_or(Abilities::NONE),
         item: Items::from_str(&normalize_name(&packed.item)).unwrap_or(Items::NONE),
         nature: PokemonNature::from_str(&normalize_name(&packed.nature))
             .unwrap_or(PokemonNature::SERIOUS),
