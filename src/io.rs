@@ -6,7 +6,7 @@ use crate::generate_instructions::{
 use crate::inspect_state::inspect_state_and_observation;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
-use crate::mcts_noheal::perform_mcts_nh;
+use crate::mcts_az::{perform_mcts_az, NeuralNet};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use tch::Device;
 struct IOData {
     state: State,
     instruction_list: Vec<Vec<Instruction>>,
@@ -38,7 +39,7 @@ enum SubCommand {
     Expectiminimax(Expectiminimax),
     IterativeDeepening(IterativeDeepening),
     MonteCarloTreeSearch(MonteCarloTreeSearch),
-    MonteCarloTreeSearchNH(MonteCarloTreeSearchNH),
+    MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     InspectStateAndObservation(InspectStateAndObservation),
@@ -94,7 +95,7 @@ struct MonteCarloTreeSearch {
 }
 
 #[derive(Parser)]
-struct MonteCarloTreeSearchNH {
+struct MonteCarloTreeSearchAZ {
     #[clap(short, long, required = true)]
     state: String,
 
@@ -687,14 +688,20 @@ pub fn main() {
                 );
                 pprint_mcts_result(&state, result);
             }
-            SubCommand::MonteCarloTreeSearchNH(mcts) => {
-                state = State::deserialize(mcts.state.as_str());
+            SubCommand::MonteCarloTreeSearchAZ(mcts_az) => {
+                state = State::deserialize(mcts_az.state.as_str());
+                let device = Device::Cpu; // or Device::Cuda(0) for GPU
+                let model = match NeuralNet::new("model/pokemon_az.pt", device) {
+                    Ok(model) => Arc::new(model),
+                    Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
+                };
                 (side_one_options, side_two_options) = io_get_all_options(&state);
-                let result = perform_mcts_nh(
+                let result = perform_mcts_az(
                     &mut state,
                     side_one_options.clone(),
                     side_two_options.clone(),
-                    std::time::Duration::from_millis(mcts.time_to_search_ms),
+                    std::time::Duration::from_millis(mcts_az.time_to_search_ms),
+                    model.clone(),
                 );
                 pprint_mcts_result(&state, result);
             }

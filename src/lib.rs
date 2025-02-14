@@ -70,7 +70,7 @@ pub mod inspect_state;
 pub mod instruction;
 pub mod io;
 pub mod mcts;
-pub mod mcts_noheal;
+pub mod mcts_az;
 pub mod observation;
 pub mod pokemon;
 pub mod search;
