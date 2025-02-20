@@ -315,20 +315,12 @@ fn write_volatile_status_section(output: &mut String, section: &[f32]) {
     }
 }
 
-pub fn inspect_state_and_observation(state_str: &str, output_file: &str) -> std::io::Result<()> {
+pub fn generate_observation_output(state_str: &str, output_file: &str) -> std::io::Result<()> {
     let state = State::deserialize(state_str);
     let mut file = File::create(output_file)?;
 
-    writeln!(file, "=== STATE VISUALIZATION ===\n")?;
-    writeln!(file, "{}", visualize_state(&state))?;
-
-    writeln!(file, "\n=== OBSERVATION ENCODING ===\n")?;
     let obs = generate_observation(&state, SideReference::SideOne);
-    writeln!(
-        file,
-        "{}",
-        inspect_observation(&obs, SideReference::SideOne)
-    )?;
+    writeln!(file, "{:?}", obs)?;
 
     Ok(())
 }

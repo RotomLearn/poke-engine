@@ -40,7 +40,7 @@ fn encode_volatile_statuses(observation: &mut Vec<f32>, side: &Side) {
     observation.extend(volatile_vec);
 }
 
-fn encode_pokemon(pokemon: &Pokemon, side: &Side, is_active: bool) -> Vec<f32> {
+fn encode_pokemon(pokemon: &Pokemon, is_active: bool) -> Vec<f32> {
     let mut vec = Vec::new();
 
     // Active flag (1 value)
@@ -334,35 +334,19 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
 
     // Encode all Pokémon
     // Active Pokémon first
-    observation.extend(encode_pokemon(
-        our_side.get_active_immutable(),
-        our_side,
-        true,
-    ));
+    observation.extend(encode_pokemon(our_side.get_active_immutable(), true));
 
     for pokemon_index in pokemon_index_iter() {
         if pokemon_index != our_side.active_index {
-            observation.extend(encode_pokemon(
-                &our_side.pokemon[pokemon_index],
-                our_side,
-                false,
-            ));
+            observation.extend(encode_pokemon(&our_side.pokemon[pokemon_index], false));
         }
     }
-    observation.extend(encode_pokemon(
-        opponent_side.get_active_immutable(),
-        opponent_side,
-        true,
-    ));
+    observation.extend(encode_pokemon(opponent_side.get_active_immutable(), true));
 
     // Then rest of the team
     for pokemon_index in pokemon_index_iter() {
         if pokemon_index != opponent_side.active_index {
-            observation.extend(encode_pokemon(
-                &opponent_side.pokemon[pokemon_index],
-                opponent_side,
-                false,
-            ));
+            observation.extend(encode_pokemon(&opponent_side.pokemon[pokemon_index], false));
         }
     }
 

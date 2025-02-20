@@ -3,10 +3,10 @@ use crate::evaluate::evaluate;
 use crate::generate_instructions::{
     calculate_both_damage_rolls, generate_instructions_from_move_pair,
 };
-use crate::inspect_state::inspect_state_and_observation;
+use crate::inspect_state::generate_observation_output;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
-use crate::mcts_az::{perform_mcts_az, NeuralNet};
+use crate::mcts_az::{perform_mcts_az, MctsResultAZ, NeuralNet};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
@@ -42,7 +42,7 @@ enum SubCommand {
     MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
-    InspectStateAndObservation(InspectStateAndObservation),
+    GenerateObservation(GenerateObservation),
     SelfPlay(SelfPlay),
 }
 
@@ -57,7 +57,7 @@ pub struct SelfPlay {
 }
 
 #[derive(Parser)]
-struct InspectStateAndObservation {
+struct GenerateObservation {
     #[clap(short, long, required = true)]
     input_file: String,
     #[clap(short, long, required = true)]
@@ -448,41 +448,9 @@ fn pprint_expectiminimax_result(
     }
 }
 
-fn print_mcts_result(state: &State, result: MctsResult) {
-    let s1_joined_options = result
-        .s1
-        .iter()
-        .map(|x| {
-            format!(
-                "{},{:.2},{}",
-                get_move_id_from_movechoice(&state.side_one, &x.move_choice),
-                x.total_score,
-                x.visits
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("|");
-    let s2_joined_options = result
-        .s2
-        .iter()
-        .map(|x| {
-            format!(
-                "{},{:.2},{}",
-                get_move_id_from_movechoice(&state.side_two, &x.move_choice),
-                x.total_score,
-                x.visits
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("|");
-
-    println!("Total Iterations: {}", result.iteration_count);
-    println!("side one: {}", s1_joined_options);
-    println!("side two: {}", s2_joined_options);
-}
-
 fn pprint_mcts_result(state: &State, result: MctsResult) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
+    println!("Maximum Depth: {}", result.max_depth);
     println!("Side One:");
     println!(
         "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
@@ -512,6 +480,44 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
             x.total_score / x.visits as f32,
             x.visits,
             (x.visits as f32 / result.iteration_count as f32) * 100.0
+        );
+    }
+}
+
+fn pprint_mcts_result_AZ(state: &State, result: MctsResultAZ) {
+    println!("\nTotal Iterations: {}\n", result.iteration_count);
+    println!("Maximum Depth: {}", result.max_depth);
+    println!("Side One:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s1.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
+        );
+    }
+
+    println!("Side Two:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s2.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
         );
     }
 }
@@ -646,11 +652,11 @@ pub fn main() {
                 )
                 .unwrap();
             }
-            SubCommand::InspectStateAndObservation(args) => {
+            SubCommand::GenerateObservation(args) => {
                 let state_string =
                     std::fs::read_to_string(&args.input_file).expect("Failed to read input file");
                 let state_string = state_string.trim();
-                inspect_state_and_observation(state_string, args.output_file.trim())
+                generate_observation_output(state_string, args.output_file.trim())
                     .expect("Failed to write inspection file");
             }
             SubCommand::Expectiminimax(expectiminimax) => {
@@ -691,7 +697,7 @@ pub fn main() {
             SubCommand::MonteCarloTreeSearchAZ(mcts_az) => {
                 state = State::deserialize(mcts_az.state.as_str());
                 let device = Device::Cpu; // or Device::Cuda(0) for GPU
-                let model = match NeuralNet::new("model/pokemon_az.pt", device) {
+                let model = match NeuralNet::new("model/pokemon_az_quantized.pt", device) {
                     Ok(model) => Arc::new(model),
                     Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
                 };
@@ -703,7 +709,7 @@ pub fn main() {
                     std::time::Duration::from_millis(mcts_az.time_to_search_ms),
                     model.clone(),
                 );
-                pprint_mcts_result(&state, result);
+                pprint_mcts_result_AZ(&state, result);
             }
             SubCommand::CalculateDamage(calculate_damage) => {
                 state = State::deserialize(calculate_damage.state.as_str());

@@ -63,6 +63,20 @@ impl Node {
         }
     }
 
+    fn get_max_depth(&self) -> usize {
+        if self.children.is_empty() {
+            return 0;
+        }
+
+        let mut max_child_depth = 0;
+        for (_, children) in &self.children {
+            for child in children {
+                max_child_depth = max_child_depth.max(child.get_max_depth());
+            }
+        }
+        max_child_depth + 1
+    }
+
     pub fn maximize_ucb_for_side(&self, side_map: &[MoveNode]) -> usize {
         let mut choice = 0;
         let mut best_ucb1 = f32::MIN;
@@ -222,6 +236,7 @@ pub struct MctsResult {
     pub s1: Vec<MctsSideResult>,
     pub s2: Vec<MctsSideResult>,
     pub iteration_count: i64,
+    pub max_depth: usize,
 }
 
 fn do_mcts(root_node: &mut Node, state: &mut State, root_eval: &f32) {
@@ -263,7 +278,8 @@ pub fn perform_mcts(
             break;
         }
     }
-
+    // let max_depth = root_node.get_max_depth();
+    let max_depth = 0;
     let result = MctsResult {
         s1: root_node
             .s1_options
@@ -284,6 +300,7 @@ pub fn perform_mcts(
             })
             .collect(),
         iteration_count: root_node.times_visited,
+        max_depth,
     };
 
     result
