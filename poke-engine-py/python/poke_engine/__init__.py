@@ -253,10 +253,10 @@ def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path
         # If still no model_path, raise an error
         if model_path is None:
             raise FileNotFoundError(
-                f"Model file path not found. Please provide it via one of these methods:\n"
+                "Model file path not found. Please provide it via one of these methods:\n"
                 "1. Pass it directly to the function\n"
                 "2. Set the POKE_ENGINE_MODEL_PATH environment variable\n"
-                "3. Create a config file at {config_paths}"
+                f"3. Create a config file at {config_paths}"
             )
     
     # Check if the model file exists
