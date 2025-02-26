@@ -234,7 +234,6 @@ def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path
             os.path.join(os.path.expanduser("~"), ".poke_engine_config.json"),
             os.path.join(os.getcwd(), "poke_engine_config.json")
         ]
-        print(config_paths)
         
         for config_path in config_paths:
             if os.path.exists(config_path):
