@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::{pyfunction, pymethods, pymodule, wrap_pyfunction, Bound, PyResult};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use lazy_static::lazy_static;
 use poke_engine::abilities::Abilities;
 use poke_engine::choices::{Choices, MoveCategory, MOVES};
 use poke_engine::generate_instructions::{
@@ -19,10 +20,16 @@ use poke_engine::state::{
     PokemonStatus, PokemonType, PokemonVolatileStatus, Side, SideConditions, SidePokemon, State,
     StateTerrain, StateTrickRoom, StateWeather, Terrain, Weather,
 };
+use pyo3::exceptions::PyRuntimeError;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tch::Device;
+
+// Global model cache
+lazy_static! {
+    static ref MODEL_CACHE: Mutex<HashMap<String, Arc<NeuralNet>>> = Mutex::new(HashMap::new());
+}
 
 #[derive(Clone)]
 #[pyclass(name = "State")]
@@ -871,33 +878,53 @@ fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
 }
 
 #[pyfunction]
-fn mcts_az(
-    mut py_state: PyState,
-    duration_ms: u64,
-    model_path: String,
-) -> PyResult<PyMctsResultAZ> {
-    let duration = Duration::from_millis(duration_ms);
+fn load_model(model_path: String) -> PyResult<String> {
     let device = Device::Cpu;
 
-    let model = match NeuralNet::new(&model_path, device) {
-        Ok(model) => Arc::new(model),
-        Err(e) => {
-            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to load model at {}: {}",
-                model_path, e
-            )))
+    // Check if model is already loaded
+    {
+        let cache = MODEL_CACHE.lock().unwrap();
+        if cache.contains_key(&model_path) {
+            return Ok(model_path);
+        }
+    }
+
+    // Load the model
+    match NeuralNet::new(&model_path, device) {
+        Ok(model) => {
+            let model_arc = Arc::new(model);
+            let mut cache = MODEL_CACHE.lock().unwrap();
+            cache.insert(model_path.clone(), model_arc);
+            Ok(model_path)
+        }
+        Err(e) => Err(PyErr::new::<PyRuntimeError, _>(format!(
+            "Failed to load model at {}: {}",
+            model_path, e
+        ))),
+    }
+}
+
+#[pyfunction]
+fn mcts_az(mut py_state: PyState, duration_ms: u64, model_id: String) -> PyResult<PyMctsResultAZ> {
+    let duration = Duration::from_millis(duration_ms);
+
+    // Get the model from cache
+    let model = {
+        let cache = MODEL_CACHE.lock().unwrap();
+        match cache.get(&model_id) {
+            Some(model) => model.clone(),
+            None => {
+                return Err(PyErr::new::<PyRuntimeError, _>(format!(
+                    "Model with ID {} not found in cache. Call load_model first.",
+                    model_id
+                )))
+            }
         }
     };
 
-    // Rest of your function remains the same
+    // Run MCTS
     let (s1_options, s2_options) = io_get_all_options(&py_state.state);
-    let mcts_result = perform_mcts_az(
-        &mut py_state.state,
-        s1_options,
-        s2_options,
-        duration,
-        model.clone(),
-    );
+    let mcts_result = perform_mcts_az(&mut py_state.state, s1_options, s2_options, duration, model);
 
     let py_mcts_result = PyMctsResultAZ::from_mcts_result_az(mcts_result, &py_state.state);
     Ok(py_mcts_result)
@@ -1063,6 +1090,7 @@ fn py_poke_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(id, m)?)?;
     m.add_function(wrap_pyfunction!(mcts, m)?)?;
     m.add_function(wrap_pyfunction!(mcts_az, m)?)?;
+    m.add_function(wrap_pyfunction!(load_model, m)?)?;
     m.add_class::<PyState>()?;
     m.add_class::<PySide>()?;
     m.add_class::<PySideConditions>()?;

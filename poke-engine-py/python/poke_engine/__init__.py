@@ -17,6 +17,7 @@ from ._poke_engine import (
     state_from_string as _state_from_string,
     mcts as _mcts,
     mcts_az as _mcts_az,
+    load_model as _load_model,
     id as _id
 )
 
@@ -214,18 +215,14 @@ def monte_carlo_tree_search(state: State, duration_ms: int = 1000) -> MctsResult
     """
     return MctsResult._from_rust(_mcts(state._into_rust_obj(), duration_ms))
 
-def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path: str = None) -> MctsResultAZ:
+def load_model(model_path: str = None) -> str:
     """
-    Perform monte-carlo-tree-search on the given state and for the given duration
-
-    :param state: the state to search through
-    :type state: State
-    :param duration_ms: time in milliseconds to run the search
-    :type duration_ms: int
-    :param model_path: optional path to model file
+    Load the neural network model for AlphaZero Monte Carlo Tree Search
+    
+    :param model_path: Path to the model file
     :type model_path: str
-    :return: the result of the search
-    :rtype: MctsResultAZ
+    :return: Model ID to use in subsequent MCTS calls
+    :rtype: str
     """
     # If model_path is provided, use it directly
     if model_path is None:
@@ -262,8 +259,33 @@ def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path
     # Check if the model file exists
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at {model_path}")
-    
-    return MctsResultAZ._from_rust(_mcts_az(state._into_rust_obj(), duration_ms, model_path))
+        
+    # Load the model and return the model ID (which is just the path)
+    return _load_model(model_path)
+
+def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_id: str = None) -> MctsResultAZ:
+    """
+    Perform monte-carlo-tree-search on the given state and for the given duration
+
+    :param state: the state to search through
+    :type state: State
+    :param duration_ms: time in milliseconds to run the search
+    :type duration_ms: int
+    :param model_id: Model ID returned from load_model(), or path to model file
+    :type model_id: str
+    :return: the result of the search
+    :rtype: MctsResultAZ
+    """
+    if model_id is None:
+        # Try to find a default model path and load it
+        model_path = find_default_model_path()  # Implement this function to find model
+        model_id = load_model(model_path)
+    elif os.path.exists(model_id) and model_id.endswith('.pt'):
+        # If model_id looks like a file path, try to load it
+        model_id = load_model(model_id)
+        
+    # Run MCTS with the loaded model
+    return MctsResultAZ._from_rust(_mcts_az(state._into_rust_obj(), duration_ms, model_id))
 
 
 def iterative_deepening_expectiminimax(
@@ -413,6 +435,7 @@ __all__ = [
     "generate_instructions",
     "monte_carlo_tree_search",
     "monte_carlo_tree_search_az",
+    "load_model",
     "iterative_deepening_expectiminimax",
     "calculate_damage",
     "state_from_string"
