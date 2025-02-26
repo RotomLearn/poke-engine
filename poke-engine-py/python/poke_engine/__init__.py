@@ -131,6 +131,66 @@ class MctsResult:
             total_visits=rust_result.iteration_count,
         )
 
+@dataclass
+class MctsSideResultAZ:
+    """
+    Result of a Monte Carlo Tree Search for a single side
+
+    :param move_choice: The move that was chosen
+    :type move_choice: str
+    :param total_score: The total score of the chosen move
+    :type total_score: float
+    :param visits: The number of times the move was chosen
+    :type visits: int
+    """
+
+    move_choice: str
+    total_score: float
+    visits: int
+    prior_prob: float
+
+
+@dataclass
+class MctsResultAZ:
+    """
+    Result of a Monte Carlo Tree Search
+
+    :param side_one: Result for side one
+    :type side_one: list[MctsSideResult]
+    :param side_two: Result for side two
+    :type side_two: list[MctsSideResult]
+    :param total_visits: Total number of monte carlo iterations
+    :type total_visits: int
+    """
+
+    side_one: list[MctsSideResultAZ]
+    side_two: list[MctsSideResultAZ]
+    total_visits: int
+
+    @classmethod
+    def _from_rust(cls, rust_result):
+        return cls(
+            side_one=[
+                MctsSideResultAZ(
+                    move_choice=i.move_choice,
+                    total_score=i.total_score,
+                    visits=i.visits,
+                    prior_prob=i.prior_prob
+                )
+                for i in rust_result.s1
+            ],
+            side_two=[
+                MctsSideResultAZ(
+                    move_choice=i.move_choice,
+                    total_score=i.total_score,
+                    visits=i.visits,
+                    prior_prob=i.prior_prob
+                )
+                for i in rust_result.s2
+            ],
+            total_visits=rust_result.iteration_count,
+        )
+
 
 def generate_instructions(state: State, side_one_move: str, side_two_move: str):
     """
@@ -152,7 +212,7 @@ def monte_carlo_tree_search(state: State, duration_ms: int = 1000) -> MctsResult
     """
     return MctsResult._from_rust(_mcts(state._into_rust_obj(), duration_ms))
 
-def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000) -> MctsResult:
+def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000) -> MctsResultAZ:
     """
     Perform monte-carlo-tree-search on the given state and for the given duration
 
@@ -307,6 +367,8 @@ __all__ = [
     "Move",
     "MctsResult",
     "MctsSideResult",
+    "MctsResultAZ",
+    "MctsSideResultAZ",
     "IterativeDeepeningResult",
     "generate_instructions",
     "monte_carlo_tree_search",
