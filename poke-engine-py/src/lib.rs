@@ -11,6 +11,7 @@ use poke_engine::instruction::{Instruction, StateInstructions};
 use poke_engine::io::io_get_all_options;
 use poke_engine::items::Items;
 use poke_engine::mcts::{perform_mcts, MctsResult, MctsSideResult};
+use poke_engine::mcts_az::{perform_mcts_az, NeuralNet};
 use poke_engine::pokemon::PokemonName;
 use poke_engine::search::iterative_deepen_expectiminimax;
 use poke_engine::state::{
@@ -20,6 +21,7 @@ use poke_engine::state::{
 };
 use std::str::FromStr;
 use std::time::Duration;
+use tch::Device;
 
 #[derive(Clone)]
 #[pyclass(name = "State")]
@@ -822,6 +824,27 @@ fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
 }
 
 #[pyfunction]
+fn mcts_az(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
+    let duration = Duration::from_millis(duration_ms);
+    let device = Device::Cpu;
+    let model = match NeuralNet::new("../model/pokemon_az_quantized.pt", device) {
+        Ok(model) => Arc::new(model),
+        Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
+    };
+    let (s1_options, s2_options) = io_get_all_options(&py_state.state);
+    let mcts_result = perform_mcts_az(
+        &mut py_state.state,
+        s1_options,
+        s2_options,
+        duration,
+        model.clone(),
+    );
+
+    let py_mcts_result = PyMctsResult::from_mcts_result(mcts_result, &py_state.state);
+    Ok(py_mcts_result)
+}
+
+#[pyfunction]
 fn id(mut py_state: PyState, duration_ms: u64) -> PyResult<PyIterativeDeepeningResult> {
     let duration = Duration::from_millis(duration_ms);
     let (s1_options, s2_options) = io_get_all_options(&py_state.state);
@@ -980,6 +1003,7 @@ fn py_poke_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gi, m)?)?;
     m.add_function(wrap_pyfunction!(id, m)?)?;
     m.add_function(wrap_pyfunction!(mcts, m)?)?;
+    m.add_function(wrap_pyfunction!(mcts_az, m)?)?;
     m.add_class::<PyState>()?;
     m.add_class::<PySide>()?;
     m.add_class::<PySideConditions>()?;
