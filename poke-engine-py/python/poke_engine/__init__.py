@@ -1,5 +1,7 @@
 from dataclasses import dataclass
-
+import os
+import pathlib
+import json
 from .state import (
     State,
     Side,
@@ -220,9 +222,48 @@ def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path
     :type state: State
     :param duration_ms: time in milliseconds to run the search
     :type duration_ms: int
+    :param model_path: optional path to model file
+    :type model_path: str
     :return: the result of the search
-    :rtype: MctsResult
+    :rtype: MctsResultAZ
     """
+    # If model_path is provided, use it directly
+    if model_path is None:
+        # Try to find a config file
+        config_paths = [
+            os.path.join(os.path.expanduser("~"), ".poke_engine_config.json"),
+            os.path.join(os.getcwd(), "poke_engine_config.json")
+        ]
+        print(config_paths)
+        
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                        if 'model_path' in config:
+                            model_path = config['model_path']
+                            break
+                except Exception as e:
+                    print(f"Error reading config file {config_path}: {e}")
+        
+        # If still no model_path, check environment variable
+        if model_path is None:
+            model_path = os.environ.get("POKE_ENGINE_MODEL_PATH")
+            
+        # If still no model_path, raise an error
+        if model_path is None:
+            raise FileNotFoundError(
+                "Model file path not found. Please provide it via one of these methods:\n"
+                "1. Pass it directly to the function\n"
+                "2. Set the POKE_ENGINE_MODEL_PATH environment variable\n"
+                "3. Create a config file at ~/.poke_engine_config.json or ./poke_engine_config.json with a 'model_path' key"
+            )
+    
+    # Check if the model file exists
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found at {model_path}")
+    
     return MctsResultAZ._from_rust(_mcts_az(state._into_rust_obj(), duration_ms, model_path))
 
 
