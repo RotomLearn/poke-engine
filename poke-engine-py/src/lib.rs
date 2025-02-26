@@ -871,12 +871,23 @@ fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
 }
 
 #[pyfunction]
-fn mcts_az(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResultAZ> {
+#[pyo3(signature = (py_state, duration_ms, model_path=None))]
+fn mcts_az(
+    mut py_state: PyState,
+    duration_ms: u64,
+    model_path: Option<String>,
+) -> PyResult<PyMctsResultAZ> {
     let duration = Duration::from_millis(duration_ms);
     let device = Device::Cpu;
-    let model = match NeuralNet::new("../model/pokemon_az_quantized.pt", device) {
+    let path = model_path.unwrap_or_else(|| "../model/pokemon_az_quantized.pt".to_string());
+    let model = match NeuralNet::new(&path, device) {
         Ok(model) => Arc::new(model),
-        Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
+        Err(e) => {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to load model at {}: {}",
+                path, e
+            )))
+        }
     };
     let (s1_options, s2_options) = io_get_all_options(&py_state.state);
     let mcts_result = perform_mcts_az(

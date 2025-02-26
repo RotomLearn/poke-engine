@@ -212,7 +212,7 @@ def monte_carlo_tree_search(state: State, duration_ms: int = 1000) -> MctsResult
     """
     return MctsResult._from_rust(_mcts(state._into_rust_obj(), duration_ms))
 
-def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000) -> MctsResultAZ:
+def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000, model_path: str = None) -> MctsResultAZ:
     """
     Perform monte-carlo-tree-search on the given state and for the given duration
 
@@ -223,7 +223,7 @@ def monte_carlo_tree_search_az(state: State, duration_ms: int = 1000) -> MctsRes
     :return: the result of the search
     :rtype: MctsResult
     """
-    return MctsResult._from_rust(_mcts_az(state._into_rust_obj(), duration_ms))
+    return MctsResultAZ._from_rust(_mcts_az(state._into_rust_obj(), duration_ms, model_path))
 
 
 def iterative_deepening_expectiminimax(
