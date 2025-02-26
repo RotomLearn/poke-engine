@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.23.4", features = ["extension-module"] }
 poke-engine = { path = "../" }
+tch = {version = "0.19"}
 
 [features]
 default = ["poke-engine/gen4"]

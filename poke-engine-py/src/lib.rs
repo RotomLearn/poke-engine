@@ -11,7 +11,7 @@ use poke_engine::instruction::{Instruction, StateInstructions};
 use poke_engine::io::io_get_all_options;
 use poke_engine::items::Items;
 use poke_engine::mcts::{perform_mcts, MctsResult, MctsSideResult};
-use poke_engine::mcts_az::{perform_mcts_az, NeuralNet};
+use poke_engine::mcts_az::{perform_mcts_az, MctsResultAZ, MctsSideResultAZ, NeuralNet};
 use poke_engine::pokemon::PokemonName;
 use poke_engine::search::iterative_deepen_expectiminimax;
 use poke_engine::state::{
@@ -20,6 +20,7 @@ use poke_engine::state::{
     StateTerrain, StateTrickRoom, StateWeather, Terrain, Weather,
 };
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tch::Device;
 
@@ -784,6 +785,52 @@ impl PyMctsResult {
 
 #[derive(Clone)]
 #[pyclass(get_all)]
+struct PyMctsSideResultAZ {
+    pub move_choice: String,
+    pub total_score: f32,
+    pub visits: i64,
+    pub prior_prob: f32,
+}
+
+impl PyMctsSideResultAZ {
+    fn from_mcts_side_result_az(result: MctsSideResultAZ, side: &Side) -> Self {
+        PyMctsSideResultAZ {
+            move_choice: result.move_choice.to_string(side),
+            total_score: result.total_score,
+            visits: result.visits,
+            prior_prob: result.prior_prob,
+        }
+    }
+}
+
+#[derive(Clone)]
+#[pyclass(get_all)]
+struct PyMctsResultAZ {
+    s1: Vec<PyMctsSideResultAZ>,
+    s2: Vec<PyMctsSideResultAZ>,
+    iteration_count: i64,
+}
+
+impl PyMctsResultAZ {
+    fn from_mcts_result_az(result: MctsResultAZ, state: &State) -> Self {
+        PyMctsResultAZ {
+            s1: result
+                .s1
+                .iter()
+                .map(|r| PyMctsSideResultAZ::from_mcts_side_result_az(r.clone(), &state.side_one))
+                .collect(),
+            s2: result
+                .s2
+                .iter()
+                .map(|r| PyMctsSideResultAZ::from_mcts_side_result_az(r.clone(), &state.side_two))
+                .collect(),
+            iteration_count: result.iteration_count,
+        }
+    }
+}
+
+#[derive(Clone)]
+#[pyclass(get_all)]
 struct PyIterativeDeepeningResult {
     s1: Vec<String>,
     s2: Vec<String>,
@@ -824,7 +871,7 @@ fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
 }
 
 #[pyfunction]
-fn mcts_az(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
+fn mcts_az(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResultAZ> {
     let duration = Duration::from_millis(duration_ms);
     let device = Device::Cpu;
     let model = match NeuralNet::new("../model/pokemon_az_quantized.pt", device) {
@@ -840,7 +887,7 @@ fn mcts_az(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
         model.clone(),
     );
 
-    let py_mcts_result = PyMctsResult::from_mcts_result(mcts_result, &py_state.state);
+    let py_mcts_result = PyMctsResultAZ::from_mcts_result_az(mcts_result, &py_state.state);
     Ok(py_mcts_result)
 }
 
