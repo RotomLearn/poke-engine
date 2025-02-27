@@ -21,6 +21,14 @@ pub struct NeuralNet {
 
 impl NeuralNet {
     pub fn new(model_path: &str, device: Device) -> Result<Self, Box<dyn std::error::Error>> {
+        // Explicitly set these before loading the model
+        tch::set_num_threads(1);
+        
+        // Disable internal threading for BLAS operations
+        std::env::set_var("OMP_NUM_THREADS", "1");
+        std::env::set_var("MKL_NUM_THREADS", "1");
+        std::env::set_var("OPENBLAS_NUM_THREADS", "1");
+        
         let model = CModule::load(model_path)?;
         Ok(NeuralNet { model, device })
     }
