@@ -331,24 +331,21 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
         (opponent_side.accuracy_boost + 6) as usize,
         13,
     ));
-
-    // Encode all Pokémon
-    // Active Pokémon first
-    observation.extend(encode_pokemon(our_side.get_active_immutable(), true));
-
+    
+    // Encode our team (in party slot order)
     for pokemon_index in pokemon_index_iter() {
-        if pokemon_index != our_side.active_index {
-            observation.extend(encode_pokemon(&our_side.pokemon[pokemon_index], false));
-        }
+        let pokemon = &our_side.pokemon[pokemon_index];
+        let is_active = pokemon_index == our_side.active_index;
+        observation.extend(encode_pokemon(pokemon, is_active));
     }
-    observation.extend(encode_pokemon(opponent_side.get_active_immutable(), true));
 
-    // Then rest of the team
+    // Encode opponent team (in party slot order)
     for pokemon_index in pokemon_index_iter() {
-        if pokemon_index != opponent_side.active_index {
-            observation.extend(encode_pokemon(&opponent_side.pokemon[pokemon_index], false));
-        }
+        let pokemon = &opponent_side.pokemon[pokemon_index];
+        let is_active = pokemon_index == opponent_side.active_index;
+        observation.extend(encode_pokemon(pokemon, is_active));
     }
+
 
     observation
 }
