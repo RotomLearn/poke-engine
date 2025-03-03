@@ -347,7 +347,11 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
         observation.extend(encode_pokemon(pokemon, is_active));
     }
 
-    observation.push(evaluate(state));
+    let evaluation = evaluate(state);
+    match side_reference {
+        SideReference::SideOne => observation.push(evaluation),
+        SideReference::SideTwo => observation.push(-evaluation), // Negate the evaluation
+    }
 
     observation
 }
