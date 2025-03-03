@@ -101,6 +101,9 @@ struct MonteCarloTreeSearchAZ {
 
     #[clap(short, long, default_value_t = 5000)]
     time_to_search_ms: u64,
+
+    #[clap(short, long, required = true)]
+    model_path: String,
 }
 
 #[derive(Parser)]
@@ -697,7 +700,7 @@ pub fn main() {
             SubCommand::MonteCarloTreeSearchAZ(mcts_az) => {
                 state = State::deserialize(mcts_az.state.as_str());
                 let device = Device::Cpu; // or Device::Cuda(0) for GPU
-                let model = match NeuralNet::new("model/pokemon_az_quantized.pt", device) {
+                let model = match NeuralNet::new(&mcts_az.model_path, device) {
                     Ok(model) => Arc::new(model),
                     Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
                 };

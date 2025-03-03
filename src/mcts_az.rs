@@ -23,47 +23,153 @@ impl NeuralNet {
     pub fn new(model_path: &str, device: Device) -> Result<Self, Box<dyn std::error::Error>> {
         // Explicitly set these before loading the model
         tch::set_num_threads(1);
-        
+
         // Disable internal threading for BLAS operations
         std::env::set_var("OMP_NUM_THREADS", "1");
         std::env::set_var("MKL_NUM_THREADS", "1");
         std::env::set_var("OPENBLAS_NUM_THREADS", "1");
-        
+
         let model = CModule::load(model_path)?;
         Ok(NeuralNet { model, device })
     }
 
     pub fn evaluate_batch(&self, states: &[State]) -> (Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<f32>) {
-        // Generate observations for all states
-        let mut flat_observations = Vec::new();
+        let batch_size = states.len();
         let obs_size = generate_observation(&states[0], SideReference::SideOne).len();
 
-        for state in states {
+        // Pre-allocate all buffers at full size to avoid reallocations
+        let total_elements = batch_size * 2 * obs_size;
+        let mut flat_observations = Vec::with_capacity(total_elements);
+
+        // Pre-allocate mask buffers
+        let total_move_elements = batch_size * 2 * 4;
+        let total_switch_elements = batch_size * 2 * 6;
+        let total_action_elements = batch_size * 2 * 3191;
+
+        let mut all_move_masks = vec![true; total_move_elements];
+        let mut all_switch_masks = vec![true; total_switch_elements];
+        let mut all_action_masks = vec![true; total_action_elements];
+
+        for (i, state) in states.iter().enumerate() {
+            // Generate observations
             let obs_s1 = generate_observation(state, SideReference::SideOne);
             let obs_s2 = generate_observation(state, SideReference::SideTwo);
-            flat_observations.extend(obs_s1);
-            flat_observations.extend(obs_s2);
+            flat_observations.extend_from_slice(&obs_s1);
+            flat_observations.extend_from_slice(&obs_s2);
+
+            // Get move options for both sides
+            let (s1_options, s2_options) = state.get_all_options();
+
+            // Calculate base indices for this state in the flattened arrays
+            let s1_move_base = i * 2 * 4;
+            let s2_move_base = s1_move_base + 4;
+            let s1_switch_base = i * 2 * 6;
+            let s2_switch_base = s1_switch_base + 6;
+            let s1_action_base = i * 2 * 3191;
+            let s2_action_base = s1_action_base + 3191;
+
+            // Process options directly into the pre-allocated arrays
+            for option in &s1_options {
+                match option {
+                    MoveChoice::Move(idx) => {
+                        let idx_usize = *idx as usize;
+                        let move_id = state.side_one.get_active_immutable().moves[idx].id as usize;
+                        all_move_masks[s1_move_base + idx_usize] = false;
+                        if move_id < 885 {
+                            all_action_masks[s1_action_base + move_id] = false;
+                        }
+                    }
+                    MoveChoice::MoveTera(idx) => {
+                        let idx_usize = *idx as usize;
+                        let move_id = state.side_one.get_active_immutable().moves[idx].id as usize;
+                        all_move_masks[s1_move_base + idx_usize] = false;
+                        if move_id < 885 {
+                            all_action_masks[s1_action_base + 885 + move_id] = false;
+                        }
+                    }
+                    MoveChoice::Switch(idx) => {
+                        let idx_usize = *idx as usize;
+                        let pokemon_id = state.side_one.pokemon[*idx].id as usize;
+                        all_switch_masks[s1_switch_base + idx_usize] = false;
+                        if pokemon_id < 1420 {
+                            all_action_masks[s1_action_base + 1770 + pokemon_id] = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Process Side 2 options
+            for option in &s2_options {
+                match option {
+                    MoveChoice::Move(idx) => {
+                        let idx_usize = *idx as usize;
+                        let move_id = state.side_two.get_active_immutable().moves[idx].id as usize;
+                        all_move_masks[s2_move_base + idx_usize] = false;
+                        if move_id < 885 {
+                            all_action_masks[s2_action_base + move_id] = false;
+                        }
+                    }
+                    MoveChoice::MoveTera(idx) => {
+                        let idx_usize = *idx as usize;
+                        let move_id = state.side_two.get_active_immutable().moves[idx].id as usize;
+                        all_move_masks[s2_move_base + idx_usize] = false;
+                        if move_id < 885 {
+                            all_action_masks[s2_action_base + 885 + move_id] = false;
+                        }
+                    }
+                    MoveChoice::Switch(idx) => {
+                        let idx_usize = *idx as usize;
+                        let pokemon_id = state.side_two.pokemon[*idx].id as usize;
+                        all_switch_masks[s2_switch_base + idx_usize] = false;
+                        if pokemon_id < 1420 {
+                            all_action_masks[s2_action_base + 1770 + pokemon_id] = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
-        // Convert to tensor and reshape for batch processing
+        // Convert directly to tensors
         let obs_tensor = Tensor::from_slice(&flat_observations)
             .to_device(self.device)
             .view([states.len() as i64 * 2, obs_size as i64]);
+
+        let move_mask_tensor = Tensor::from_slice(&all_move_masks)
+            .to_device(self.device)
+            .view([states.len() as i64 * 2, 4]);
+
+        let switch_mask_tensor = Tensor::from_slice(&all_switch_masks)
+            .to_device(self.device)
+            .view([states.len() as i64 * 2, 6]);
+
+        let action_mask_tensor = Tensor::from_slice(&all_action_masks)
+            .to_device(self.device)
+            .view([states.len() as i64 * 2, 3191]);
+
         // Forward pass
-        let output = self.model.forward_ts(&[obs_tensor]).unwrap();
+        let output = self
+            .model
+            .forward_ts(&[
+                obs_tensor,
+                move_mask_tensor,
+                switch_mask_tensor,
+                action_mask_tensor,
+            ])
+            .unwrap();
 
-        // Split output into policy and value
-        let policy_logits = output.slice(1, 0, 3191, 1); // 3191 is policy size
-        let value = output.slice(1, 3191, 3192, 1); // Last column is value
-
-        // Convert policy to probabilities
+        // Process output (this part could be optimized further with slicing)
+        let policy_logits = output.slice(1, 0, 3191, 1);
+        let value = output.slice(1, 3191, 3192, 1);
         let policy_probs = policy_logits.softmax(-1, tch::Kind::Float);
 
-        // Extract results for each state
+        // Pre-allocate results vectors
         let mut policies_s1 = Vec::with_capacity(states.len());
         let mut policies_s2 = Vec::with_capacity(states.len());
         let mut values = Vec::with_capacity(states.len());
 
+        // Extract results more efficiently using one tensor operation if possible
         for i in 0..states.len() {
             policies_s1.push(Vec::<f32>::try_from(policy_probs.get(2 * (i as i64))).unwrap());
             policies_s2.push(Vec::<f32>::try_from(policy_probs.get(2 * (i as i64) + 1)).unwrap());
@@ -78,6 +184,61 @@ impl NeuralNet {
         let obs_s1 = generate_observation(state, SideReference::SideOne);
         let obs_s2 = generate_observation(state, SideReference::SideTwo);
 
+        // Get move options
+        let (s1_options, s2_options) = state.get_all_options();
+
+        // Create mask tensors (true = unavailable)
+        let mut s1_move_mask = vec![true; 4];
+        let mut s1_switch_mask = vec![true; 6];
+        let mut s1_action_mask = vec![true; 3191];
+
+        // Fill in availability based on s1_options
+        for option in &s1_options {
+            match option {
+                MoveChoice::Move(idx) => {
+                    let move_id = state.side_one.get_active_immutable().moves[idx].id as usize;
+                    s1_move_mask[*idx as usize] = false;
+                    s1_action_mask[move_id] = false;
+                }
+                MoveChoice::MoveTera(idx) => {
+                    let move_id = state.side_one.get_active_immutable().moves[idx].id as usize;
+                    s1_move_mask[*idx as usize] = false;
+                    s1_action_mask[885 + move_id] = false;
+                }
+                MoveChoice::Switch(idx) => {
+                    let pokemon_id = state.side_one.pokemon[*idx].id as usize;
+                    s1_switch_mask[*idx as usize] = false;
+                    s1_action_mask[1770 + pokemon_id] = false;
+                }
+                _ => {}
+            }
+        }
+
+        let mut s2_move_mask = vec![true; 4];
+        let mut s2_switch_mask = vec![true; 6];
+        let mut s2_action_mask = vec![true; 3191];
+
+        for option in &s2_options {
+            match option {
+                MoveChoice::Move(idx) => {
+                    let move_id = state.side_two.get_active_immutable().moves[idx].id as usize;
+                    s2_move_mask[*idx as usize] = false;
+                    s2_action_mask[move_id] = false;
+                }
+                MoveChoice::MoveTera(idx) => {
+                    let move_id = state.side_two.get_active_immutable().moves[idx].id as usize;
+                    s2_move_mask[*idx as usize] = false;
+                    s2_action_mask[885 + move_id] = false;
+                }
+                MoveChoice::Switch(idx) => {
+                    let pokemon_id = state.side_two.pokemon[*idx].id as usize;
+                    s2_switch_mask[*idx as usize] = false;
+                    s2_action_mask[1770 + pokemon_id] = false;
+                }
+                _ => {}
+            }
+        }
+
         // Convert to tensors and reshape for batch processing
         let obs_s1_tensor = Tensor::from_slice(&obs_s1)
             .to_device(self.device)
@@ -86,11 +247,37 @@ impl NeuralNet {
             .to_device(self.device)
             .view([1, obs_s2.len() as i64]);
 
+        let s1_move_mask_tensor = Tensor::from_slice(&s1_move_mask)
+            .to_device(self.device)
+            .view([1, 4]);
+        let s1_switch_mask_tensor = Tensor::from_slice(&s1_switch_mask)
+            .to_device(self.device)
+            .view([1, 6]);
+        let s1_action_mask_tensor = Tensor::from_slice(&s1_action_mask)
+            .to_device(self.device)
+            .view([1, 3191]);
+
+        let s2_move_mask_tensor = Tensor::from_slice(&s2_move_mask)
+            .to_device(self.device)
+            .view([1, 4]);
+        let s2_switch_mask_tensor = Tensor::from_slice(&s2_switch_mask)
+            .to_device(self.device)
+            .view([1, 6]);
+        let s2_action_mask_tensor = Tensor::from_slice(&s2_action_mask)
+            .to_device(self.device)
+            .view([1, 3191]);
+
         // Stack for batch processing
         let obs = Tensor::cat(&[obs_s1_tensor, obs_s2_tensor], 0);
+        let move_mask = Tensor::cat(&[s1_move_mask_tensor, s2_move_mask_tensor], 0);
+        let switch_mask = Tensor::cat(&[s1_switch_mask_tensor, s2_switch_mask_tensor], 0);
+        let action_mask = Tensor::cat(&[s1_action_mask_tensor, s2_action_mask_tensor], 0);
 
         // Forward pass - returns [batch_size, policy_size + 1]
-        let output = self.model.forward_ts(&[obs]).unwrap();
+        let output = self
+            .model
+            .forward_ts(&[obs, move_mask, switch_mask, action_mask])
+            .unwrap();
 
         // Split output into policy and value
         // Policy is all but last column, value is last column
@@ -416,8 +603,8 @@ pub fn perform_mcts_az(
             break;
         }
     }
-    // let max_depth = root_node.get_max_depth();
-    let max_depth = 0;
+    let max_depth = root_node.get_max_depth();
+    // let max_depth = 0;
     MctsResultAZ {
         s1: root_node
             .s1_options
