@@ -6,7 +6,9 @@ use crate::generate_instructions::{
 use crate::inspect_state::generate_observation_output;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::mcts::{perform_mcts, MctsResult};
-use crate::mcts_az::{perform_mcts_az, MctsResultAZ, NeuralNet};
+use crate::mcts_az::{
+    perform_mcts_az, perform_mcts_az_with_forced, AZParams, MctsResultAZ, NeuralNet,
+};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
@@ -40,6 +42,7 @@ enum SubCommand {
     IterativeDeepening(IterativeDeepening),
     MonteCarloTreeSearch(MonteCarloTreeSearch),
     MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
+    MonteCarloTreeSearchAZForced(MonteCarloTreeSearchAZForced),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     GenerateObservation(GenerateObservation),
@@ -104,6 +107,21 @@ struct MonteCarloTreeSearchAZ {
 
     #[clap(short, long, required = true)]
     model_path: String,
+}
+
+#[derive(Parser)]
+struct MonteCarloTreeSearchAZForced {
+    #[clap(short, long, required = true)]
+    state: String,
+
+    #[clap(short, long, default_value_t = 5000)]
+    time_to_search_ms: u64,
+
+    #[clap(short, long, required = true)]
+    model_path: String,
+
+    #[clap(short, long, default_value_t = 0.3)]
+    alpha: f32,
 }
 
 #[derive(Parser)]
@@ -711,6 +729,29 @@ pub fn main() {
                     side_two_options.clone(),
                     std::time::Duration::from_millis(mcts_az.time_to_search_ms),
                     model.clone(),
+                );
+                pprint_mcts_result_AZ(&state, result);
+            }
+            SubCommand::MonteCarloTreeSearchAZForced(mcts_az_forced) => {
+                state = State::deserialize(mcts_az_forced.state.as_str());
+                let device = Device::Cpu; // or Device::Cuda(0) for GPU
+                let model = match NeuralNet::new(&mcts_az_forced.model_path, device) {
+                    Ok(model) => Arc::new(model),
+                    Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
+                };
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let az_params = Some(AZParams {
+                    dirichlet_alpha_base: mcts_az_forced.alpha,
+                    use_adaptive_alpha: true,
+                    dirichlet_weight: 0.25,
+                });
+                let result = perform_mcts_az_with_forced(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts_az_forced.time_to_search_ms),
+                    model.clone(),
+                    az_params,
                 );
                 pprint_mcts_result_AZ(&state, result);
             }

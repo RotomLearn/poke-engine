@@ -1,3 +1,4 @@
+use crate::evaluate::evaluate;
 use crate::state::{
     pokemon_index_iter, Pokemon, PokemonStatus, Side, SideReference, State, Weather,
 };
@@ -331,7 +332,7 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
         (opponent_side.accuracy_boost + 6) as usize,
         13,
     ));
-    
+
     // Encode our team (in party slot order)
     for pokemon_index in pokemon_index_iter() {
         let pokemon = &our_side.pokemon[pokemon_index];
@@ -346,6 +347,7 @@ pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec
         observation.extend(encode_pokemon(pokemon, is_active));
     }
 
+    observation.push(evaluate(state));
 
     observation
 }
