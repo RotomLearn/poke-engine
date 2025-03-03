@@ -680,6 +680,11 @@ impl Pokemon {
                         // just assume nothing is locked in this case
                     }
                 }
+                if self.item == Items::ASSAULTVEST
+                    && self.moves[&iter.pokemon_move_index].choice.category == MoveCategory::Status
+                {
+                    continue;
+                }
                 vec.push(MoveChoice::Move(iter.pokemon_move_index));
                 if can_tera {
                     vec.push(MoveChoice::MoveTera(iter.pokemon_move_index));
@@ -713,6 +718,15 @@ impl Pokemon {
 
     pub fn item_is_permanent(&self) -> bool {
         match self.item {
+            Items::LUSTROUSGLOBE => self.id == PokemonName::PALKIAORIGIN,
+            Items::GRISEOUSCORE => self.id == PokemonName::GIRATINAORIGIN,
+            Items::ADAMANTCRYSTAL => self.id == PokemonName::DIALGAORIGIN,
+            Items::RUSTEDSWORD => {
+                self.id == PokemonName::ZACIANCROWNED || self.id == PokemonName::ZACIAN
+            }
+            Items::RUSTEDSHIELD => {
+                self.id == PokemonName::ZAMAZENTACROWNED || self.id == PokemonName::ZAMAZENTA
+            }
             Items::SPLASHPLATE => self.id == PokemonName::ARCEUSWATER,
             Items::TOXICPLATE => self.id == PokemonName::ARCEUSPOISON,
             Items::EARTHPLATE => self.id == PokemonName::ARCEUSGROUND,

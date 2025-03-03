@@ -83,7 +83,9 @@ pub fn modify_choice(
             // this gives the correct result even though it's not the "correct" way to implement it
             // reflect is only removed if the move hits, but I don't have a way to check that
             // doubling the power ensures the same damage calculation
-            if defending_side.side_conditions.reflect > 0 {
+            if defending_side.side_conditions.reflect > 0
+                || defending_side.side_conditions.aurora_veil > 0
+            {
                 attacker_choice.base_power *= 2.0;
             }
             match attacking_side.get_active_immutable().id {
@@ -238,18 +240,6 @@ pub fn modify_choice(
                 attacker_choice.base_power = 0.0;
             }
         }
-        Choices::PROTECT
-        | Choices::BANEFULBUNKER
-        | Choices::BURNINGBULWARK
-        | Choices::SPIKYSHIELD
-        | Choices::SILKTRAP
-        | Choices::ENDURE => {
-            if attacking_side.side_conditions.protect > 0 {
-                // for now, the engine doesn't support consecutive protects
-                // 2nd protect will always fail
-                attacker_choice.volatile_status = None;
-            }
-        }
         Choices::PSYBLADE => {
             if state.terrain.terrain_type == Terrain::ELECTRICTERRAIN {
                 attacker_choice.base_power *= 1.5;
@@ -301,10 +291,18 @@ pub fn modify_choice(
                 let defender_attack =
                     defending_side.calculate_boosted_stat(PokemonBoostableStat::Attack);
                 let attacker_maxhp = attacking_side.get_active_immutable().maxhp;
-                attacker_choice.heal = Some(Heal {
-                    target: MoveTarget::User,
-                    amount: defender_attack as f32 / attacker_maxhp as f32,
-                });
+
+                if defending_side.get_active_immutable().ability == Abilities::LIQUIDOOZE {
+                    attacker_choice.heal = Some(Heal {
+                        target: MoveTarget::User,
+                        amount: -1.0 * defender_attack as f32 / attacker_maxhp as f32,
+                    });
+                } else {
+                    attacker_choice.heal = Some(Heal {
+                        target: MoveTarget::User,
+                        amount: defender_attack as f32 / attacker_maxhp as f32,
+                    });
+                }
             }
         }
         Choices::TERABLAST => {
@@ -316,6 +314,13 @@ pub fn modify_choice(
                 {
                     attacker_choice.category = MoveCategory::Physical;
                 }
+            }
+        }
+        Choices::PHOTONGEYSER => {
+            if attacking_side.calculate_boosted_stat(PokemonBoostableStat::Attack)
+                > attacking_side.calculate_boosted_stat(PokemonBoostableStat::SpecialAttack)
+            {
+                attacker_choice.category = MoveCategory::Physical;
             }
         }
         Choices::TERRAINPULSE => match state.terrain.terrain_type {

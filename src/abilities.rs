@@ -1950,6 +1950,8 @@ pub fn ability_modify_attack_being_used(
             if attacking_pkmn.has_type(&attacker_choice.move_type) {
                 if attacking_pkmn.terastallized
                     && attacker_choice.move_type == attacking_pkmn.tera_type
+                    && (attacking_pkmn.types.0 == attacker_choice.move_type
+                        || attacking_pkmn.types.1 == attacker_choice.move_type)
                 {
                     attacker_choice.base_power *= 2.25 / 2.0;
                 } else {
@@ -2253,6 +2255,9 @@ pub fn ability_modify_attack_against(
         return;
     }
     if (attacking_pkmn.ability == Abilities::MOLDBREAKER
+        || attacker_choice.move_id == Choices::MOONGEISTBEAM
+        || attacker_choice.move_id == Choices::PHOTONGEYSER
+        || attacker_choice.move_id == Choices::SUNSTEELSTRIKE
         || (attacking_pkmn.ability == Abilities::MYCELIUMMIGHT
             && attacker_choice.category == MoveCategory::Status)
         || attacking_pkmn.ability == Abilities::TERAVOLT
@@ -2838,6 +2843,7 @@ pub fn ability_modify_attack_against(
             // This engine doesn't distinguish "targetting other pkmn" versus "targetting the side"
             // Thankfully it is a short list of moves that target the opponent side
             if attacker_choice.category == MoveCategory::Status
+                && attacker_choice.target == MoveTarget::Opponent
                 && ![
                     Choices::STEALTHROCK,
                     Choices::STICKYWEB,

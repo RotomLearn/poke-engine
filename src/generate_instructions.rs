@@ -70,6 +70,21 @@ pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
 #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
 
+#[cfg(any(
+    feature = "gen5",
+    feature = "gen6",
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9"
+))]
+pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 3.0;
+
+#[cfg(any(feature = "gen3", feature = "gen4"))]
+pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 2.0;
+
+pub const SIDE_CONDITION_DURATION: i8 = 5;
+pub const TAILWIND_DURATION: i8 = 4;
+
 fn chance_to_wake_up(turns_asleep: i8) -> f32 {
     if turns_asleep == 0 {
         0.0
@@ -266,41 +281,7 @@ fn generate_instructions_from_switch(
     }
 
     let active = side.get_active_immutable();
-    if active.item != Items::HEAVYDUTYBOOTS && active.ability != Abilities::MAGICGUARD {
-        if side.side_conditions.stealth_rock == 1 {
-            let switched_in_pkmn = side.get_active();
-            let multiplier = type_effectiveness_modifier(&PokemonType::ROCK, &switched_in_pkmn);
-
-            let dmg_amount = cmp::min(
-                (switched_in_pkmn.maxhp as f32 * multiplier / 8.0) as i16,
-                switched_in_pkmn.hp,
-            );
-            let stealth_rock_dmg_instruction = Instruction::Damage(DamageInstruction {
-                side_ref: switching_side_ref,
-                damage_amount: dmg_amount,
-            });
-            switched_in_pkmn.hp -= dmg_amount;
-            incoming_instructions
-                .instruction_list
-                .push(stealth_rock_dmg_instruction);
-        }
-
-        let switched_in_pkmn = side.get_active_immutable();
-        if side.side_conditions.spikes > 0 && switched_in_pkmn.is_grounded() {
-            let dmg_amount = cmp::min(
-                switched_in_pkmn.maxhp * side.side_conditions.spikes as i16 / 8,
-                switched_in_pkmn.hp,
-            );
-            let spikes_dmg_instruction = Instruction::Damage(DamageInstruction {
-                side_ref: switching_side_ref,
-                damage_amount: dmg_amount,
-            });
-            side.get_active().hp -= dmg_amount;
-            incoming_instructions
-                .instruction_list
-                .push(spikes_dmg_instruction);
-        }
-
+    if active.item != Items::HEAVYDUTYBOOTS {
         let switched_in_pkmn = side.get_active_immutable();
         if side.side_conditions.sticky_web == 1 && switched_in_pkmn.is_grounded() {
             // a pkmn switching in doesn't have any other speed drops,
@@ -361,6 +342,44 @@ fn generate_instructions_from_switch(
                 incoming_instructions.instruction_list.push(i);
             }
         }
+
+        let side = state.get_side(&switching_side_ref);
+        let active = side.get_active_immutable();
+        if active.ability != Abilities::MAGICGUARD {
+            if side.side_conditions.stealth_rock == 1 {
+                let switched_in_pkmn = side.get_active();
+                let multiplier = type_effectiveness_modifier(&PokemonType::ROCK, &switched_in_pkmn);
+
+                let dmg_amount = cmp::min(
+                    (switched_in_pkmn.maxhp as f32 * multiplier / 8.0) as i16,
+                    switched_in_pkmn.hp,
+                );
+                let stealth_rock_dmg_instruction = Instruction::Damage(DamageInstruction {
+                    side_ref: switching_side_ref,
+                    damage_amount: dmg_amount,
+                });
+                switched_in_pkmn.hp -= dmg_amount;
+                incoming_instructions
+                    .instruction_list
+                    .push(stealth_rock_dmg_instruction);
+            }
+
+            let switched_in_pkmn = side.get_active_immutable();
+            if side.side_conditions.spikes > 0 && switched_in_pkmn.is_grounded() {
+                let dmg_amount = cmp::min(
+                    switched_in_pkmn.maxhp * side.side_conditions.spikes as i16 / 8,
+                    switched_in_pkmn.hp,
+                );
+                let spikes_dmg_instruction = Instruction::Damage(DamageInstruction {
+                    side_ref: switching_side_ref,
+                    damage_amount: dmg_amount,
+                });
+                side.get_active().hp -= dmg_amount;
+                incoming_instructions
+                    .instruction_list
+                    .push(spikes_dmg_instruction);
+            }
+        }
     }
 
     ability_on_switch_in(state, &switching_side_ref, incoming_instructions);
@@ -369,7 +388,7 @@ fn generate_instructions_from_switch(
     state.reverse_instructions(&incoming_instructions.instruction_list);
 }
 
-fn generate_instructions_from_side_conditions(
+fn generate_instructions_from_increment_side_condition(
     state: &mut State,
     side_condition: &SideCondition,
     attacking_side_reference: &SideReference,
@@ -381,19 +400,11 @@ fn generate_instructions_from_side_conditions(
         MoveTarget::User => affected_side_ref = *attacking_side_reference,
     }
 
-    let max_layers;
-    match side_condition.condition {
-        PokemonSideCondition::Spikes => max_layers = 3,
-        PokemonSideCondition::ToxicSpikes => max_layers = 2,
-        PokemonSideCondition::AuroraVeil => {
-            max_layers = if state.weather_is_active(&Weather::HAIL) {
-                1
-            } else {
-                0
-            }
-        }
-        _ => max_layers = 1,
-    }
+    let max_layers = match side_condition.condition {
+        PokemonSideCondition::Spikes => 3,
+        PokemonSideCondition::ToxicSpikes => 2,
+        _ => 1,
+    };
 
     let affected_side = state.get_side(&affected_side_ref);
     if affected_side.get_side_condition(side_condition.condition) < max_layers {
@@ -404,6 +415,73 @@ fn generate_instructions_from_side_conditions(
         });
         affected_side.update_side_condition(side_condition.condition, 1);
         incoming_instructions.instruction_list.push(ins);
+    }
+}
+
+fn generate_instructions_from_duration_side_conditions(
+    state: &mut State,
+    side_condition: &SideCondition,
+    attacking_side_reference: &SideReference,
+    incoming_instructions: &mut StateInstructions,
+    duration: i8,
+) {
+    let affected_side_ref = match side_condition.target {
+        MoveTarget::Opponent => attacking_side_reference.get_other_side(),
+        MoveTarget::User => *attacking_side_reference,
+    };
+    if side_condition.condition == PokemonSideCondition::AuroraVeil
+        && !state.weather_is_active(&Weather::HAIL)
+        && !state.weather_is_active(&Weather::SNOW)
+    {
+        return;
+    }
+    let affected_side = state.get_side(&affected_side_ref);
+    if affected_side.get_side_condition(side_condition.condition) == 0 {
+        let ins = Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+            side_ref: affected_side_ref,
+            side_condition: side_condition.condition,
+            amount: duration,
+        });
+        affected_side.update_side_condition(side_condition.condition, duration);
+        incoming_instructions.instruction_list.push(ins);
+    }
+}
+
+fn generate_instructions_from_side_conditions(
+    state: &mut State,
+    side_condition: &SideCondition,
+    attacking_side_reference: &SideReference,
+    incoming_instructions: &mut StateInstructions,
+) {
+    match side_condition.condition {
+        PokemonSideCondition::AuroraVeil
+        | PokemonSideCondition::LightScreen
+        | PokemonSideCondition::Reflect
+        | PokemonSideCondition::Safeguard
+        | PokemonSideCondition::Mist => {
+            generate_instructions_from_duration_side_conditions(
+                state,
+                side_condition,
+                attacking_side_reference,
+                incoming_instructions,
+                SIDE_CONDITION_DURATION,
+            );
+        }
+        PokemonSideCondition::Tailwind => {
+            generate_instructions_from_duration_side_conditions(
+                state,
+                side_condition,
+                attacking_side_reference,
+                incoming_instructions,
+                TAILWIND_DURATION,
+            );
+        }
+        _ => generate_instructions_from_increment_side_condition(
+            state,
+            side_condition,
+            attacking_side_reference,
+            incoming_instructions,
+        ),
     }
 }
 
@@ -515,8 +593,9 @@ pub fn immune_to_status(
     target_side_ref: &SideReference,
     status: &PokemonStatus,
 ) -> bool {
-    let target_side = state.get_side_immutable(target_side_ref);
+    let (target_side, attacking_side) = state.get_both_sides_immutable(target_side_ref);
     let target_pkmn = target_side.get_active_immutable();
+    let attacking_pkmn = attacking_side.get_active_immutable();
 
     // General Status Immunity
     match target_pkmn.ability {
@@ -581,8 +660,9 @@ pub fn immune_to_status(
             PokemonStatus::PARALYZE => target_pkmn.ability == Abilities::LIMBER,
 
             PokemonStatus::POISON | PokemonStatus::TOXIC => {
-                target_pkmn.has_type(&PokemonType::POISON)
-                    || target_pkmn.has_type(&PokemonType::STEEL)
+                ((target_pkmn.has_type(&PokemonType::POISON)
+                    || target_pkmn.has_type(&PokemonType::STEEL))
+                    && attacking_pkmn.ability != Abilities::CORROSION)
                     || [Abilities::IMMUNITY, Abilities::PASTELVEIL].contains(&target_pkmn.ability)
             }
             _ => false,
@@ -1673,6 +1753,15 @@ fn generate_instructions_from_existing_status_conditions(
 
         incoming_instructions.update_percentage(1.0 - HIT_SELF_IN_CONFUSION_CHANCE);
     }
+
+    if attacking_side.side_conditions.protect > 0 {
+        let protect_success_chance =
+            CONSECUTIVE_PROTECT_CHANCE.powi(attacking_side.side_conditions.protect as i32);
+        let mut protect_fail_instruction = incoming_instructions.clone();
+        protect_fail_instruction.update_percentage(1.0 - protect_success_chance);
+        final_instructions.push(protect_fail_instruction);
+        incoming_instructions.update_percentage(protect_success_chance);
+    }
 }
 
 pub fn generate_instructions_from_move(
@@ -2303,6 +2392,59 @@ fn add_end_of_turn_instructions(
                 .instruction_list
                 .push(terrain_end_instruction);
             state.terrain.terrain_type = Terrain::NONE;
+        }
+    }
+
+    // Side Condition decrement
+    for side_ref in sides {
+        let side = state.get_side(side_ref);
+        if side.side_conditions.reflect > 0 {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeSideCondition(
+                    ChangeSideConditionInstruction {
+                        side_ref: *side_ref,
+                        side_condition: PokemonSideCondition::Reflect,
+                        amount: -1,
+                    },
+                ));
+            side.side_conditions.reflect -= 1;
+        }
+        if side.side_conditions.light_screen > 0 {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeSideCondition(
+                    ChangeSideConditionInstruction {
+                        side_ref: *side_ref,
+                        side_condition: PokemonSideCondition::LightScreen,
+                        amount: -1,
+                    },
+                ));
+            side.side_conditions.light_screen -= 1;
+        }
+        if side.side_conditions.aurora_veil > 0 {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeSideCondition(
+                    ChangeSideConditionInstruction {
+                        side_ref: *side_ref,
+                        side_condition: PokemonSideCondition::AuroraVeil,
+                        amount: -1,
+                    },
+                ));
+            side.side_conditions.aurora_veil -= 1;
+        }
+        if side.side_conditions.tailwind > 0 {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeSideCondition(
+                    ChangeSideConditionInstruction {
+                        side_ref: *side_ref,
+                        side_condition: PokemonSideCondition::Tailwind,
+                        amount: -1,
+                    },
+                ));
+            side.side_conditions.tailwind -= 1;
         }
     }
 
@@ -3225,7 +3367,7 @@ pub fn calculate_damage_rolls(
     if choice.flags.charge {
         choice.flags.charge = false;
     }
-    if choice.move_id == Choices::FAKEOUT {
+    if choice.move_id == Choices::FAKEOUT || choice.move_id == Choices::FIRSTIMPRESSION {
         state.get_side(attacking_side_ref).last_used_move = LastUsedMove::Switch(PokemonIndex::P0);
     }
 
@@ -3500,7 +3642,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auroa_veil_works_in_hail() {
+    fn test_aurora_veil_works_in_hail() {
         let mut state: State = State::default();
         state.weather.weather_type = Weather::HAIL;
         let mut choice = MOVES.get(&Choices::AURORAVEIL).unwrap().to_owned();
@@ -3522,9 +3664,33 @@ mod tests {
                 ChangeSideConditionInstruction {
                     side_ref: SideReference::SideOne,
                     side_condition: PokemonSideCondition::AuroraVeil,
-                    amount: 1,
+                    amount: 5,
                 },
             )],
+        };
+
+        assert_eq!(instructions, vec![expected_instructions])
+    }
+
+    #[test]
+    fn test_auroa_veil_fails_outside_hail() {
+        let mut state: State = State::default();
+        let mut choice = MOVES.get(&Choices::AURORAVEIL).unwrap().to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions: StateInstructions = StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![],
         };
 
         assert_eq!(instructions, vec![expected_instructions])
