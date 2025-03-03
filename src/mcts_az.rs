@@ -13,10 +13,23 @@ use tch::{CModule, Device, Tensor};
 
 // Constants for PUCT formula
 const C_PUCT: f32 = 2.0;
+const FORCED_PLAYOUTS_FACTOR: f32 = 2.0; // k=2 as mentioned in the paper
+const MIN_POLICY_WEIGHT: f32 = 0.01; // Minimum policy weight to keep a move after pruning
+const BASE_DIRICHLET_ALPHA: f32 = 0.3;
+const MAX_LEGAL_MOVES: usize = 13; // Maximum number of legal moves in Pokémon
 
 pub struct NeuralNet {
     model: CModule,
     device: Device,
+}
+
+// Function to calculate the number of forced playouts for a move
+fn calculate_forced_playouts(prior_prob: f32, total_playouts: i64) -> i64 {
+    // nforced = k * P(c) * sqrt(sum of all playouts)
+    let forced = (FORCED_PLAYOUTS_FACTOR * prior_prob * (total_playouts as f32))
+        .sqrt()
+        .round() as i64;
+    forced.max(1) // Ensure at least 1 forced playout
 }
 
 impl NeuralNet {
@@ -307,6 +320,68 @@ pub fn get_idx_from_movechoice(side: &Side, move_choice: &MoveChoice) -> usize {
     }
 }
 
+fn sample_gamma(alpha: f32, rng: &mut impl Rng) -> f32 {
+    if alpha >= 1.0 {
+        // For alpha >= 1, we can use a direct method
+        let d = alpha - 1.0 / 3.0;
+        let c = 1.0 / (9.0 * d).sqrt();
+
+        loop {
+            let x = rng.gen::<f32>();
+            let v = 1.0 + c * (x - 0.5);
+            if v <= 0.0 {
+                continue;
+            }
+
+            let v = v * v * v;
+            let u = rng.gen::<f32>();
+
+            if u < 1.0 - 0.331 * (x - 0.5) * (x - 0.5) {
+                return d * v;
+            }
+
+            if u.ln() < 0.5 * x * x + d * (1.0 - v + v.ln()) {
+                return d * v;
+            }
+        }
+    } else {
+        // For 0 < alpha < 1, use alpha+1 and then transform
+        let sample = sample_gamma(alpha + 1.0, rng);
+        sample * rng.gen::<f32>().powf(1.0 / alpha)
+    }
+}
+
+// Function to add Dirichlet noise to a vector of MoveNodes
+pub fn add_dirichlet_noise_to_options(
+    options: &mut Vec<MoveNode>,
+    alpha: f32,
+    weight: f32,
+    rng: &mut impl Rng,
+) {
+    if options.is_empty() {
+        return;
+    }
+
+    // Manually generate Dirichlet noise using Gamma distributions
+    let mut gamma_samples = Vec::with_capacity(options.len());
+    let mut sum = 0.0;
+
+    // Sample from Gamma distribution with shape parameter alpha
+    for _ in 0..options.len() {
+        let gamma_sample = sample_gamma(alpha, rng);
+        gamma_samples.push(gamma_sample);
+        sum += gamma_sample;
+    }
+
+    // Normalize to get Dirichlet samples
+    let noise: Vec<f32> = gamma_samples.iter().map(|&x| (x / sum) as f32).collect();
+
+    // Mix noise with prior probabilities
+    for (i, option) in options.iter_mut().enumerate() {
+        option.prior_prob = (1.0 - weight) * option.prior_prob + weight * noise[i];
+    }
+}
+
 #[derive(Debug)]
 pub struct Node {
     pub root: bool,
@@ -374,6 +449,45 @@ impl Node {
         }
     }
 
+    // Add Dirichlet noise to the root node's prior probabilities
+    pub fn add_adaptive_dirichlet_noise(&mut self, params: &AZParams, rng: &mut impl Rng) {
+        if !self.root || params.dirichlet_weight <= 0.0 {
+            return; // Only apply to root node and if parameters are valid
+        }
+
+        // Calculate adaptive alpha for side one
+        let s1_legal_move_count = self.s1_options.len();
+        let s1_alpha = if params.use_adaptive_alpha && s1_legal_move_count > 0 {
+            params.dirichlet_alpha_base * MAX_LEGAL_MOVES as f32 / s1_legal_move_count as f32
+        } else {
+            params.dirichlet_alpha_base
+        };
+
+        // Calculate adaptive alpha for side two
+        let s2_legal_move_count = self.s2_options.len();
+        let s2_alpha = if params.use_adaptive_alpha && s2_legal_move_count > 0 {
+            params.dirichlet_alpha_base * MAX_LEGAL_MOVES as f32 / s2_legal_move_count as f32
+        } else {
+            params.dirichlet_alpha_base
+        };
+
+        // Add noise to side one options with adaptive alpha
+        add_dirichlet_noise_to_options(
+            &mut self.s1_options,
+            s1_alpha,
+            params.dirichlet_weight,
+            rng,
+        );
+
+        // Add noise to side two options with adaptive alpha
+        add_dirichlet_noise_to_options(
+            &mut self.s2_options,
+            s2_alpha,
+            params.dirichlet_weight,
+            rng,
+        );
+    }
+
     fn get_max_depth(&self) -> usize {
         if self.children.is_empty() {
             return 0;
@@ -402,6 +516,31 @@ impl Node {
         choice
     }
 
+    pub fn maximize_puct_for_side_with_forced(
+        &self,
+        side_map: &[MoveNode],
+        is_root: bool,
+    ) -> usize {
+        let mut choice = 0;
+        let mut best_score = f32::MIN;
+
+        for (index, node) in side_map.iter().enumerate() {
+            // For root node, we pass the noised prior for forced playouts
+            let noised_prior = if is_root {
+                Some(node.prior_prob) // This already includes Dirichlet noise if applied
+            } else {
+                None
+            };
+
+            let this_score = node.puct_score_with_forced(self.times_visited, is_root, noised_prior);
+            if this_score > best_score {
+                best_score = this_score;
+                choice = index;
+            }
+        }
+        choice
+    }
+
     pub unsafe fn selection(&mut self, state: &mut State) -> (*mut Node, usize, usize) {
         let return_node = self as *mut Node;
 
@@ -415,6 +554,27 @@ impl Node {
                 let chosen_child = self.sample_node(child_vec_ptr);
                 state.apply_instructions(&(*chosen_child).instructions.instruction_list);
                 (*chosen_child).selection(state)
+            }
+            None => (return_node, s1_mc_index, s2_mc_index),
+        }
+    }
+
+    // Modified selection method to use forced playouts
+    pub unsafe fn selection_with_forced(&mut self, state: &mut State) -> (*mut Node, usize, usize) {
+        let return_node = self as *mut Node;
+
+        // Use forced playouts only at the root
+        let is_root = self.root;
+        let s1_mc_index = self.maximize_puct_for_side_with_forced(&self.s1_options, is_root);
+        let s2_mc_index = self.maximize_puct_for_side_with_forced(&self.s2_options, is_root);
+
+        let child_vector = self.children.get_mut(&(s1_mc_index, s2_mc_index));
+        match child_vector {
+            Some(child_vector) => {
+                let child_vec_ptr = child_vector as *mut Vec<Node>;
+                let chosen_child = self.sample_node(child_vec_ptr);
+                state.apply_instructions(&(*chosen_child).instructions.instruction_list);
+                (*chosen_child).selection_with_forced(state)
             }
             None => (return_node, s1_mc_index, s2_mc_index),
         }
@@ -544,10 +704,47 @@ impl MoveNode {
         }
         self.total_score / self.visits as f32
     }
+
+    pub fn puct_score_with_forced(
+        &self,
+        parent_visits: i64,
+        is_root: bool,
+        noised_prior: Option<f32>,
+    ) -> f32 {
+        if self.visits == 0 {
+            return f32::INFINITY;
+        }
+
+        // For root children, check if we need forced playouts
+        if is_root && noised_prior.is_some() {
+            let prior = noised_prior.unwrap();
+            let min_visits = calculate_forced_playouts(prior, parent_visits);
+
+            // Force exploration by returning infinity if below min visits
+            if self.visits < min_visits {
+                return f32::INFINITY;
+            }
+        }
+
+        // Regular PUCT calculation
+        let q_value = self.total_score / self.visits as f32;
+        let prior_to_use = noised_prior.unwrap_or(self.prior_prob);
+        let u_value =
+            C_PUCT * prior_to_use * (parent_visits as f32).sqrt() / (1.0 + self.visits as f32);
+
+        q_value + u_value
+    }
 }
 
 fn do_mcts(root_node: &mut Node, state: &mut State, network: &NeuralNet) {
     let (new_node, s1_move, s2_move) = unsafe { root_node.selection(state) };
+    let (new_node, value) = unsafe { (*new_node).expand(state, s1_move, s2_move, network) };
+    unsafe { (*new_node).backpropagate(value, state) }
+}
+
+// Modified do_mcts function to use forced playouts
+pub fn do_mcts_with_forced(root_node: &mut Node, state: &mut State, network: &NeuralNet) {
+    let (new_node, s1_move, s2_move) = unsafe { root_node.selection_with_forced(state) };
     let (new_node, value) = unsafe { (*new_node).expand(state, s1_move, s2_move, network) };
     unsafe { (*new_node).backpropagate(value, state) }
 }
@@ -576,12 +773,144 @@ pub struct MctsResultAZ {
     pub iteration_count: i64,
     pub max_depth: usize,
 }
+
+// Parameters for AlphaZero style MCTS
+pub struct AZParams {
+    pub dirichlet_alpha_base: f32, // Base alpha value before scaling
+    pub use_adaptive_alpha: bool,  // Whether to scale alpha inversely with legal move count
+    pub dirichlet_weight: f32,     // How much to weight the noise (e.g., 0.25)
+}
+
+impl Default for AZParams {
+    fn default() -> Self {
+        AZParams {
+            dirichlet_alpha_base: BASE_DIRICHLET_ALPHA,
+            use_adaptive_alpha: true,
+            dirichlet_weight: 0.25,
+        }
+    }
+}
+
+// Function to generate pruned policy targets for training
+pub fn get_pruned_policy_targets(moves: &[MctsSideResultAZ]) -> Vec<f32> {
+    if moves.is_empty() {
+        return Vec::new();
+    }
+
+    // Find the move with the most visits
+    let best_move = moves.iter().max_by_key(|m| m.visits).unwrap();
+    let best_idx = moves
+        .iter()
+        .position(|m| m.visits == best_move.visits)
+        .unwrap();
+
+    // Calculate total visits
+    let total_visits: i64 = moves.iter().map(|m| m.visits).sum();
+
+    // Create mutable copies for pruning
+    let mut pruned_visits: Vec<i64> = moves.iter().map(|m| m.visits).collect();
+
+    // Calculate the best move's PUCT value components (we'll need this for pruning)
+    let best_q = best_move.total_score / best_move.visits as f32;
+    let best_prior = best_move.prior_prob;
+
+    // Prune forced playouts for each move
+    for (i, move_result) in moves.iter().enumerate() {
+        if i == best_idx {
+            continue; // Don't prune the best move
+        }
+
+        // Skip moves with only one visit - they'll be pruned completely later
+        if move_result.visits <= 1 {
+            pruned_visits[i] = 0;
+            continue;
+        }
+
+        // Calculate forced playouts for this move
+        let forced = calculate_forced_playouts(move_result.prior_prob, total_visits);
+        let actual = move_result.visits;
+
+        // Only prune if we have more than forced playouts
+        if actual > forced {
+            // Calculate how many we can prune without making this move better than the best move
+            let move_q = move_result.total_score / move_result.visits as f32;
+
+            // We need to maintain: PUCT(move) < PUCT(best_move)
+            // This is a complex calculation that depends on both Q-values and exploration terms
+            // For simplicity, we'll be conservative and just prune to the forced playouts level
+            let to_prune = actual - forced;
+            pruned_visits[i] = actual - to_prune;
+        }
+    }
+
+    // Prune moves that have been reduced to just 1 visit
+    for visits in pruned_visits.iter_mut() {
+        if *visits <= 1 {
+            *visits = 0;
+        }
+    }
+
+    // Calculate the pruned total visits
+    let pruned_total: i64 = pruned_visits.iter().sum();
+    if pruned_total == 0 {
+        // If we've pruned everything (shouldn't happen), just return the raw policy
+        return moves.iter().map(|m| m.prior_prob).collect();
+    }
+
+    // Normalize to get the pruned policy
+    let mut pruned_policy: Vec<f32> = pruned_visits
+        .iter()
+        .map(|&v| v as f32 / pruned_total as f32)
+        .collect();
+
+    // One final check: ensure all moves have at least MIN_POLICY_WEIGHT if they had any visits
+    let mut weight_to_redistribute = 0.0;
+    for (i, &visits) in pruned_visits.iter().enumerate() {
+        if visits == 0 && moves[i].visits > 0 {
+            // This move had visits but was pruned
+            pruned_policy[i] = MIN_POLICY_WEIGHT;
+            weight_to_redistribute += MIN_POLICY_WEIGHT;
+        }
+    }
+
+    // Redistribute the added minimum weights
+    if weight_to_redistribute > 0.0 {
+        let scale = (1.0 - weight_to_redistribute) / pruned_policy.iter().sum::<f32>();
+        for (i, weight) in pruned_policy.iter_mut().enumerate() {
+            if pruned_visits[i] > 0 {
+                *weight *= scale;
+            }
+        }
+    }
+
+    pruned_policy
+}
+
 pub fn perform_mcts_az(
     state: &mut State,
     side_one_options: Vec<MoveChoice>,
     side_two_options: Vec<MoveChoice>,
     max_time: Duration,
     network: Arc<NeuralNet>,
+) -> MctsResultAZ {
+    // Default parameters (no noise)
+    perform_mcts_az_with_params(
+        state,
+        side_one_options,
+        side_two_options,
+        max_time,
+        network,
+        None,
+    )
+}
+
+pub fn perform_mcts_az_with_params(
+    state: &mut State,
+    side_one_options: Vec<MoveChoice>,
+    side_two_options: Vec<MoveChoice>,
+    max_time: Duration,
+    network: Arc<NeuralNet>,
+    params: Option<AZParams>,
 ) -> MctsResultAZ {
     // Get initial policy for root node
     let (policy_s1, policy_s2, _) = network.evaluate(state);
@@ -594,6 +923,12 @@ pub fn perform_mcts_az(
     );
     root_node.root = true;
 
+    // Apply Dirichlet noise to root if parameters are provided
+    if let Some(params) = params {
+        let mut rng = thread_rng();
+        root_node.add_adaptive_dirichlet_noise(&params, &mut rng);
+    }
+
     let start_time = std::time::Instant::now();
     while start_time.elapsed() < max_time {
         for _ in 0..10 {
@@ -603,8 +938,9 @@ pub fn perform_mcts_az(
             break;
         }
     }
-    let max_depth = root_node.get_max_depth();
-    // let max_depth = 0;
+
+    let max_depth = 0; // Original code sets this to 0
+
     MctsResultAZ {
         s1: root_node
             .s1_options
@@ -628,5 +964,98 @@ pub fn perform_mcts_az(
             .collect(),
         iteration_count: root_node.times_visited,
         max_depth,
+    }
+}
+
+pub fn perform_mcts_az_with_forced(
+    state: &mut State,
+    side_one_options: Vec<MoveChoice>,
+    side_two_options: Vec<MoveChoice>,
+    max_time: Duration,
+    network: Arc<NeuralNet>,
+    params: Option<AZParams>,
+) -> MctsResultAZ {
+    // Get initial policy for root node
+    let (policy_s1, policy_s2, _) = network.evaluate(state);
+    let mut root_node = Node::new(
+        side_one_options,
+        side_two_options,
+        &policy_s1,
+        &policy_s2,
+        state,
+    );
+    root_node.root = true;
+
+    // Apply adaptive Dirichlet noise to root if parameters are provided
+    if let Some(params) = params {
+        let mut rng = thread_rng();
+        root_node.add_adaptive_dirichlet_noise(&params, &mut rng);
+    }
+
+    let start_time = std::time::Instant::now();
+    while start_time.elapsed() < max_time {
+        for _ in 0..10 {
+            do_mcts_with_forced(&mut root_node, state, &network);
+        }
+        if root_node.times_visited == 10_000_000 {
+            break;
+        }
+    }
+
+    // Generate raw results
+    let raw_s1 = root_node
+        .s1_options
+        .iter()
+        .map(|v| MctsSideResultAZ {
+            move_choice: v.move_choice.clone(),
+            total_score: v.total_score,
+            visits: v.visits,
+            prior_prob: v.prior_prob,
+        })
+        .collect::<Vec<_>>();
+
+    let raw_s2 = root_node
+        .s2_options
+        .iter()
+        .map(|v| MctsSideResultAZ {
+            move_choice: v.move_choice.clone(),
+            total_score: v.total_score,
+            visits: v.visits,
+            prior_prob: v.prior_prob,
+        })
+        .collect::<Vec<_>>();
+
+    // Apply KataGo's policy target pruning for training policy targets
+    let pruned_s1 = get_pruned_policy_targets(&raw_s1);
+    let pruned_s2 = get_pruned_policy_targets(&raw_s2);
+
+    // Set the pruned policy weights for each move
+    let s1_with_pruned_policy = raw_s1
+        .iter()
+        .enumerate()
+        .map(|(i, v)| MctsSideResultAZ {
+            move_choice: v.move_choice.clone(),
+            total_score: v.total_score,
+            visits: v.visits,
+            prior_prob: pruned_s1.get(i).copied().unwrap_or(0.0),
+        })
+        .collect();
+
+    let s2_with_pruned_policy = raw_s2
+        .iter()
+        .enumerate()
+        .map(|(i, v)| MctsSideResultAZ {
+            move_choice: v.move_choice.clone(),
+            total_score: v.total_score,
+            visits: v.visits,
+            prior_prob: pruned_s2.get(i).copied().unwrap_or(0.0),
+        })
+        .collect();
+
+    MctsResultAZ {
+        s1: s1_with_pruned_policy,
+        s2: s2_with_pruned_policy,
+        iteration_count: root_node.times_visited,
+        max_depth: 0,
     }
 }

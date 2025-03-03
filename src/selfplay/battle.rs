@@ -1,6 +1,5 @@
 use crate::abilities::ability_on_switch_in;
 use crate::generate_instructions::generate_instructions_from_move_pair;
-use crate::inspect_state::inspect_observation;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::items::item_on_switch_in;
 use crate::observation::generate_observation;
@@ -8,7 +7,6 @@ use crate::selfplay::initialization;
 use crate::selfplay::player::{MctsPlayer, Player};
 use crate::state::{MoveChoice, PokemonIndex, SideReference, State};
 use parking_lot::RwLock;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -350,15 +348,17 @@ impl Battle {
             }
 
             // Create state clones and get player references before parallel execution
-            let state_clone1 = self.state.clone();
-            let state_clone2 = self.state.clone();
+            let mut state_clone1 = self.state.clone();
+            let mut state_clone2 = self.state.clone();
             let player1 = &mut self.player1;
             let player2 = &mut self.player2;
 
             // Parallel move selection
+            let current_turn = self.turn_count;
+
             let (p1_choice, p2_choice) = rayon::join(
-                || player1.choose_move(&mut state_clone1.clone(), true),
-                || player2.choose_move(&mut state_clone2.clone(), false),
+                || player1.choose_move(&mut state_clone1, true, current_turn),
+                || player2.choose_move(&mut state_clone2, false, current_turn),
             );
 
             // Rest of the turn logic...
