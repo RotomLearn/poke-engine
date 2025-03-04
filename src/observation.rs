@@ -96,11 +96,17 @@ fn encode_pokemon(pokemon: &Pokemon, is_active: bool) -> Vec<f32> {
     vec.extend(encode_onehot(pokemon.rest_turns as usize, 4)); // Rest turns
     vec.extend(encode_onehot(pokemon.sleep_turns as usize, 4)); // Sleep turns
 
+    vec.push(pokemon.maxhp as i32 as f32);
+    vec.push(pokemon.attack as i32 as f32);
+    vec.push(pokemon.defense as i32 as f32);
+    vec.push(pokemon.special_attack as i32 as f32);
+    vec.push(pokemon.special_defense as i32 as f32);
+    vec.push(pokemon.speed as i32 as f32);
     vec
 }
 
 pub fn generate_observation(state: &State, side_reference: SideReference) -> Vec<f32> {
-    let mut observation = Vec::with_capacity(3253);
+    let mut observation = Vec::with_capacity(4000);
 
     // Weather encoding (14 values)
     // First 5 values for weather type (NONE, SUN, RAIN, SAND, HAIL)
