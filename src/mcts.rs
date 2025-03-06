@@ -278,8 +278,8 @@ pub fn perform_mcts(
             break;
         }
     }
-    // let max_depth = root_node.get_max_depth();
-    let max_depth = 0;
+    let max_depth = root_node.get_max_depth();
+    // let max_depth = 0;
     let result = MctsResult {
         s1: root_node
             .s1_options

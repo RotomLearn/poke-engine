@@ -71,6 +71,7 @@ pub mod instruction;
 pub mod io;
 pub mod mcts;
 pub mod mcts_az;
+pub mod mcts_vn;
 pub mod observation;
 pub mod pokemon;
 pub mod search;

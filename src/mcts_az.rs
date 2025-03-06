@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use crate::generate_instructions::generate_instructions_from_move_pair;
 use crate::instruction::StateInstructions;
 use crate::observation::generate_observation;

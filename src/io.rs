@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
 use crate::evaluate::evaluate;
 use crate::generate_instructions::{
@@ -9,6 +10,7 @@ use crate::mcts::{perform_mcts, MctsResult};
 use crate::mcts_az::{
     perform_mcts_az, perform_mcts_az_with_forced, AZParams, MctsResultAZ, NeuralNet,
 };
+use crate::mcts_vn::{perform_mcts_vn, MctsResultVN, ValueNetwork};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
@@ -42,6 +44,7 @@ enum SubCommand {
     IterativeDeepening(IterativeDeepening),
     MonteCarloTreeSearch(MonteCarloTreeSearch),
     MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
+    MonteCarloTreeSearchVN(MonteCarloTreeSearchVN),
     MonteCarloTreeSearchAZForced(MonteCarloTreeSearchAZForced),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
@@ -99,6 +102,18 @@ struct MonteCarloTreeSearch {
 
 #[derive(Parser)]
 struct MonteCarloTreeSearchAZ {
+    #[clap(short, long, required = true)]
+    state: String,
+
+    #[clap(short, long, default_value_t = 5000)]
+    time_to_search_ms: u64,
+
+    #[clap(short, long, required = true)]
+    model_path: String,
+}
+
+#[derive(Parser)]
+struct MonteCarloTreeSearchVN {
     #[clap(short, long, required = true)]
     state: String,
 
@@ -505,7 +520,7 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
     }
 }
 
-fn pprint_mcts_result_AZ(state: &State, result: MctsResultAZ) {
+fn pprint_mcts_result_az(state: &State, result: MctsResultAZ) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
     println!("Maximum Depth: {}", result.max_depth);
     println!("Side One:");
@@ -539,6 +554,43 @@ fn pprint_mcts_result_AZ(state: &State, result: MctsResultAZ) {
             x.visits,
             (x.visits as f32 / result.iteration_count as f32) * 100.0,
             x.prior_prob
+        );
+    }
+}
+
+fn pprint_mcts_result_vn(state: &State, result: MctsResultVN) {
+    println!("\nTotal Iterations: {}\n", result.iteration_count);
+    println!("Maximum Depth: {}", result.max_depth);
+    println!("Neural Evals: {}", result.neural_evals_count);
+    println!("Side One:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits"
+    );
+    for x in result.s1.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
+            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0
+        );
+    }
+
+    println!("Side Two:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits"
+    );
+    for x in result.s2.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
+            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0
         );
     }
 }
@@ -730,7 +782,25 @@ pub fn main() {
                     std::time::Duration::from_millis(mcts_az.time_to_search_ms),
                     model.clone(),
                 );
-                pprint_mcts_result_AZ(&state, result);
+                pprint_mcts_result_az(&state, result);
+            }
+
+            SubCommand::MonteCarloTreeSearchVN(mcts_vn) => {
+                state = State::deserialize(mcts_vn.state.as_str());
+                let device = Device::Cpu; // or Device::Cuda(0) for GPU
+                let model = match ValueNetwork::new(&mcts_vn.model_path, device) {
+                    Ok(model) => Some(Arc::new(model)),
+                    Err(e) => panic!("Failed to load model: {}", e),
+                };
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let result = perform_mcts_vn(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts_vn.time_to_search_ms),
+                    model.clone(),
+                );
+                pprint_mcts_result_vn(&state, result);
             }
             SubCommand::MonteCarloTreeSearchAZForced(mcts_az_forced) => {
                 state = State::deserialize(mcts_az_forced.state.as_str());
@@ -753,7 +823,7 @@ pub fn main() {
                     model.clone(),
                     az_params,
                 );
-                pprint_mcts_result_AZ(&state, result);
+                pprint_mcts_result_az(&state, result);
             }
             SubCommand::CalculateDamage(calculate_damage) => {
                 state = State::deserialize(calculate_damage.state.as_str());

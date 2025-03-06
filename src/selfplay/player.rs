@@ -1,5 +1,6 @@
 use crate::mcts::perform_mcts;
 use crate::mcts_az::{perform_mcts_az_with_forced, AZParams, MctsSideResultAZ, NeuralNet};
+use crate::mcts_vn::{perform_mcts_vn, ValueNetwork};
 use crate::state::{MoveChoice, State};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
@@ -277,6 +278,103 @@ impl Player for MctsPlayerAZ {
             side_two_options
         };
 
+        PlayerChoice {
+            chosen_move: options[best_idx].clone(),
+            move_weights,
+        }
+    }
+}
+
+pub struct MctsPlayerVN {
+    search_time: Duration,
+    model_path: String,
+    model_cache: Mutex<Option<Arc<ValueNetwork>>>,
+}
+
+impl MctsPlayerVN {
+    pub fn new(search_time: Duration, model_path: &str) -> Self {
+        Self {
+            search_time,
+            model_path: model_path.to_string(),
+            model_cache: Mutex::new(None),
+        }
+    }
+
+    // Initialize model if not already cached
+    fn get_model(&self) -> Option<Arc<ValueNetwork>> {
+        let mut model_guard = self.model_cache.lock().unwrap();
+
+        if model_guard.is_none() {
+            let device = Device::Cpu;
+            match ValueNetwork::new(&self.model_path, device) {
+                Ok(model) => {
+                    *model_guard = Some(Arc::new(model));
+                }
+                Err(e) => {
+                    eprintln!("Failed to load value network model: {}", e);
+                    return None;
+                }
+            }
+        }
+
+        model_guard.as_ref().map(Arc::clone)
+    }
+}
+
+impl Player for MctsPlayerVN {
+    fn choose_move(
+        &mut self,
+        state: &mut State,
+        is_player_one: bool,
+        _turn_count: u32,
+    ) -> PlayerChoice {
+        // Get the model
+        let model = self.get_model();
+
+        let (side_one_options, side_two_options) = state.get_all_options();
+
+        // Perform MCTS with value network guidance
+        let result = perform_mcts_vn(
+            state,
+            side_one_options.clone(),
+            side_two_options.clone(),
+            self.search_time,
+            model,
+        );
+
+        // Get the moves for the current player
+        let moves = if is_player_one {
+            &result.s1
+        } else {
+            &result.s2
+        };
+
+        // Calculate move weights based on visit counts
+        let total_visits: i64 = moves.iter().map(|m| m.visits).sum();
+        let move_weights = if total_visits > 0 {
+            moves
+                .iter()
+                .map(|m| m.visits as f32 / total_visits as f32)
+                .collect()
+        } else {
+            vec![1.0 / moves.len() as f32; moves.len()]
+        };
+
+        // Choose the move with highest visit count
+        let best_idx = moves
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, m)| m.visits)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        let options = if is_player_one {
+            side_one_options
+        } else {
+            side_two_options
+        };
+
+        // Return the chosen move and normalized weights
         PlayerChoice {
             chosen_move: options[best_idx].clone(),
             move_weights,
