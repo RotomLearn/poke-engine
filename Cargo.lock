@@ -652,6 +652,7 @@ dependencies = [
  "clap",
  "deunicode",
  "lazy_static",
+ "ndarray",
  "parking_lot",
  "rand 0.8.5",
  "rand_distr",
