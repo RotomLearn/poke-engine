@@ -2,7 +2,7 @@ use crate::abilities::Abilities;
 use crate::choices::Choices;
 use crate::items::Items;
 use crate::pokemon::PokemonName;
-use crate::state::LastUsedMove;
+use crate::state::{LastUsedMove, VolatileStatusDurations};
 use crate::state::{
     Move, Pokemon, PokemonIndex, PokemonMoves, PokemonNature, PokemonStatus, PokemonType, Side,
     SideConditions, SidePokemon, State, StateTerrain, StateTrickRoom, StateWeather, Terrain,
@@ -343,6 +343,7 @@ pub fn initialize_battle_state(
         last_used_move: LastUsedMove::None,
         damage_dealt: Default::default(),
         switch_out_move_second_saved_move: Choices::NONE,
+        volatile_status_durations: VolatileStatusDurations::default(),
     };
 
     let side_two = Side {
@@ -367,6 +368,7 @@ pub fn initialize_battle_state(
         last_used_move: LastUsedMove::None,
         damage_dealt: Default::default(),
         switch_out_move_second_saved_move: Choices::NONE,
+        volatile_status_durations: VolatileStatusDurations::default(),
     };
 
     State {
