@@ -13,10 +13,10 @@ use crate::choices::{
 };
 use crate::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
-    ChangeSideConditionInstruction, ChangeTerrain, ChangeWeather, DecrementRestTurnsInstruction,
-    DecrementWishInstruction, HealInstruction, RemoveVolatileStatusInstruction,
-    SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction, ToggleBatonPassingInstruction,
-    ToggleTrickRoomInstruction,
+    ChangeSideConditionInstruction, ChangeTerrain, ChangeVolatileStatusDurationInstruction,
+    ChangeWeather, DecrementRestTurnsInstruction, DecrementWishInstruction, HealInstruction,
+    RemoveVolatileStatusInstruction, SetSecondMoveSwitchOutMoveInstruction,
+    SetSleepTurnsInstruction, ToggleBatonPassingInstruction, ToggleTrickRoomInstruction,
 };
 use crate::instruction::{DecrementFutureSightInstruction, SetDamageDealtSideTwoInstruction};
 use crate::instruction::{DecrementPPInstruction, SetLastUsedMoveInstruction};
@@ -523,17 +523,6 @@ fn get_instructions_from_volatile_statuses(
         side.volatile_statuses
             .insert(volatile_status.volatile_status);
         incoming_instructions.instruction_list.push(ins);
-
-        let affected_pkmn = state.get_side(&target_side).get_active();
-        let damage_taken = affected_pkmn.maxhp / 4;
-        if volatile_status.volatile_status == PokemonVolatileStatus::SUBSTITUTE {
-            let ins = Instruction::Damage(DamageInstruction {
-                side_ref: target_side,
-                damage_amount: damage_taken,
-            });
-            affected_pkmn.hp -= damage_taken;
-            incoming_instructions.instruction_list.push(ins);
-        }
     }
 }
 
@@ -1836,7 +1825,7 @@ pub fn generate_instructions_from_move(
 
     state.apply_instructions(&incoming_instructions.instruction_list);
 
-    let side = state.get_side_immutable(&attacking_side);
+    let side = state.get_side(&attacking_side);
     if side
         .volatile_statuses
         .contains(&PokemonVolatileStatus::ENCORE)
@@ -1852,6 +1841,49 @@ pub fn generate_instructions_from_move(
                 }
             }
             _ => panic!("Encore should not be active when last used move is not a move"),
+        }
+
+        // this value is incremented when an encored move has been used
+        // the value being 2 means we are currently using the 3rd move so we can remove it
+        #[cfg(any(
+            feature = "gen5",
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9"
+        ))]
+        if side.volatile_status_durations.encore == 2 {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::RemoveVolatileStatus(
+                    RemoveVolatileStatusInstruction {
+                        side_ref: attacking_side,
+                        volatile_status: PokemonVolatileStatus::ENCORE,
+                    },
+                ));
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeVolatileStatusDuration(
+                    ChangeVolatileStatusDurationInstruction {
+                        side_ref: attacking_side,
+                        volatile_status: PokemonVolatileStatus::ENCORE,
+                        amount: -2,
+                    },
+                ));
+            side.volatile_status_durations.encore = 0;
+            side.volatile_statuses
+                .remove(&PokemonVolatileStatus::ENCORE);
+        } else {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeVolatileStatusDuration(
+                    ChangeVolatileStatusDurationInstruction {
+                        side_ref: attacking_side,
+                        volatile_status: PokemonVolatileStatus::ENCORE,
+                        amount: 1,
+                    },
+                ));
+            side.volatile_status_durations.encore += 1;
         }
     }
 
@@ -2252,6 +2284,7 @@ fn moves_first(
     state: &State,
     side_one_choice: &Choice,
     side_two_choice: &Choice,
+    incoming_instructions: &mut StateInstructions,
 ) -> SideMovesFirst {
     let side_one_effective_speed = get_effective_speed(&state, &SideReference::SideOne);
     let side_two_effective_speed = get_effective_speed(&state, &SideReference::SideTwo);
@@ -2286,10 +2319,24 @@ fn moves_first(
         if side_one_active.item == Items::CUSTAPBERRY
             && side_one_active.hp < side_one_active.maxhp / 4
         {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeItem(ChangeItemInstruction {
+                    side_ref: SideReference::SideOne,
+                    new_item: Items::NONE,
+                    current_item: Items::CUSTAPBERRY,
+                }));
             return SideMovesFirst::SideOne;
         } else if side_two_active.item == Items::CUSTAPBERRY
             && side_two_active.hp < side_two_active.maxhp / 4
         {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeItem(ChangeItemInstruction {
+                    side_ref: SideReference::SideTwo,
+                    new_item: Items::NONE,
+                    current_item: Items::CUSTAPBERRY,
+                }));
             return SideMovesFirst::SideTwo;
         }
 
@@ -2701,6 +2748,63 @@ fn add_end_of_turn_instructions(
         let side = state.get_side(side_ref);
         if side.get_active().hp == 0 {
             continue;
+        }
+
+        if side
+            .volatile_statuses
+            .contains(&PokemonVolatileStatus::LOCKEDMOVE)
+        {
+            // the number says 2 but this is 3 turns of using a locking move
+            // because turn 0 is the first turn the move is used
+            // branching is not implemented here so the engine assumes it always lasts 3 turns
+            if side.volatile_status_durations.lockedmove == 2 {
+                side.volatile_status_durations.lockedmove = 0;
+                side.volatile_statuses
+                    .remove(&PokemonVolatileStatus::LOCKEDMOVE);
+                incoming_instructions.instruction_list.push(
+                    Instruction::ChangeVolatileStatusDuration(
+                        ChangeVolatileStatusDurationInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                            amount: -2,
+                        },
+                    ),
+                );
+                incoming_instructions
+                    .instruction_list
+                    .push(Instruction::RemoveVolatileStatus(
+                        RemoveVolatileStatusInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                        },
+                    ));
+                if !side
+                    .volatile_statuses
+                    .contains(&PokemonVolatileStatus::CONFUSION)
+                {
+                    incoming_instructions
+                        .instruction_list
+                        .push(Instruction::ApplyVolatileStatus(
+                            ApplyVolatileStatusInstruction {
+                                side_ref: *side_ref,
+                                volatile_status: PokemonVolatileStatus::CONFUSION,
+                            },
+                        ));
+                    side.volatile_statuses
+                        .insert(PokemonVolatileStatus::CONFUSION);
+                }
+            } else {
+                side.volatile_status_durations.lockedmove += 1;
+                incoming_instructions.instruction_list.push(
+                    Instruction::ChangeVolatileStatusDuration(
+                        ChangeVolatileStatusDurationInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                            amount: 1,
+                        },
+                    ),
+                );
+            }
         }
 
         if side
@@ -3278,7 +3382,12 @@ pub fn generate_instructions_from_move_pair(
 
     modify_choice_priority(&state, &SideReference::SideOne, &mut side_one_choice);
     modify_choice_priority(&state, &SideReference::SideTwo, &mut side_two_choice);
-    match moves_first(&state, &side_one_choice, &side_two_choice) {
+    match moves_first(
+        &state,
+        &side_one_choice,
+        &side_two_choice,
+        &mut incoming_instructions,
+    ) {
         SideMovesFirst::SideOne => {
             handle_both_moves(
                 state,
@@ -3691,36 +3800,6 @@ mod tests {
         let expected_instructions: StateInstructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![],
-        };
-
-        assert_eq!(instructions, vec![expected_instructions])
-    }
-
-    #[test]
-    fn test_custap_berry_consumed_when_less_than_25_percent_hp() {
-        let mut state: State = State::default();
-        state.side_one.get_active().item = Items::CUSTAPBERRY;
-        state.side_one.get_active().hp = 24;
-        let mut choice = MOVES.get(&Choices::AURORAVEIL).unwrap().to_owned();
-
-        let mut instructions = vec![];
-        generate_instructions_from_move(
-            &mut state,
-            &mut choice,
-            &MOVES.get(&Choices::TACKLE).unwrap(),
-            SideReference::SideOne,
-            StateInstructions::default(),
-            &mut instructions,
-            false,
-        );
-
-        let expected_instructions: StateInstructions = StateInstructions {
-            percentage: 100.0,
-            instruction_list: vec![Instruction::ChangeItem(ChangeItemInstruction {
-                side_ref: SideReference::SideOne,
-                current_item: Items::CUSTAPBERRY,
-                new_item: Items::NONE,
-            })],
         };
 
         assert_eq!(instructions, vec![expected_instructions])
@@ -8180,7 +8259,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8196,7 +8280,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8215,7 +8304,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8234,7 +8328,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8249,7 +8348,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8265,7 +8369,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8283,7 +8392,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8297,7 +8411,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8313,7 +8432,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8365,7 +8489,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SpeedTie,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8379,7 +8508,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8393,7 +8527,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8407,7 +8546,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8422,7 +8566,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8439,7 +8588,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideTwo,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 
@@ -8455,7 +8609,12 @@ mod tests {
 
         assert_eq!(
             SideMovesFirst::SideOne,
-            moves_first(&state, &side_one_choice, &side_two_choice)
+            moves_first(
+                &state,
+                &side_one_choice,
+                &side_two_choice,
+                &mut StateInstructions::default()
+            )
         )
     }
 

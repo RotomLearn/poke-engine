@@ -18,7 +18,7 @@ use poke_engine::search::iterative_deepen_expectiminimax;
 use poke_engine::state::{
     LastUsedMove, Move, MoveChoice, Pokemon, PokemonIndex, PokemonMoves, PokemonNature,
     PokemonStatus, PokemonType, PokemonVolatileStatus, Side, SideConditions, SidePokemon, State,
-    StateTerrain, StateTrickRoom, StateWeather, Terrain, Weather,
+    StateTerrain, StateTrickRoom, StateWeather, Terrain, VolatileStatusDurations, Weather,
 };
 use pyo3::exceptions::PyRuntimeError;
 use std::str::FromStr;
@@ -158,6 +158,7 @@ impl PySide {
         baton_passing: bool,
         mut pokemon: Vec<PyPokemon>,
         side_conditions: PySideConditions,
+        volatile_status_durations: PyVolatileStatusDurations,
         wish: (i8, i16),
         future_sight: (i8, String),
         force_switch: bool,
@@ -201,6 +202,8 @@ impl PySide {
                 force_trapped,
                 slow_uturn_move,
                 volatile_statuses: vs_hashset,
+                volatile_status_durations: volatile_status_durations
+                    .create_volatile_status_durations(),
                 substitute_health,
                 attack_boost,
                 defense_boost,
@@ -340,6 +343,32 @@ impl PySide {
     #[getter]
     fn get_switch_out_move_second_saved_move(&self) -> String {
         self.side.switch_out_move_second_saved_move.to_string()
+    }
+}
+
+#[derive(Clone)]
+#[pyclass(name = "VolatileStatusDurations")]
+pub struct PyVolatileStatusDurations {
+    pub volatile_status_durations: VolatileStatusDurations,
+}
+
+impl PyVolatileStatusDurations {
+    fn create_volatile_status_durations(&self) -> VolatileStatusDurations {
+        self.volatile_status_durations.clone()
+    }
+}
+
+#[pymethods]
+impl PyVolatileStatusDurations {
+    #[new]
+    fn new(confusion: i8, encore: i8, lockedmove: i8) -> PyVolatileStatusDurations {
+        PyVolatileStatusDurations {
+            volatile_status_durations: VolatileStatusDurations {
+                confusion,
+                encore,
+                lockedmove,
+            },
+        }
     }
 }
 
@@ -1094,6 +1123,7 @@ fn py_poke_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyState>()?;
     m.add_class::<PySide>()?;
     m.add_class::<PySideConditions>()?;
+    m.add_class::<PyVolatileStatusDurations>()?;
     m.add_class::<PyPokemon>()?;
     m.add_class::<PyMove>()?;
     m.add_class::<PyStateInstructions>()?;

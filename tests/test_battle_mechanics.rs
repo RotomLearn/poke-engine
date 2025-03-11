@@ -11,10 +11,11 @@ use poke_engine::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeAbilityInstruction,
     ChangeItemInstruction, ChangeSideConditionInstruction, ChangeStatInstruction,
     ChangeStatusInstruction, ChangeSubsituteHealthInstruction, ChangeTerrain, ChangeType,
-    ChangeWeather, ChangeWishInstruction, DamageInstruction, DecrementFutureSightInstruction,
-    DecrementPPInstruction, DecrementRestTurnsInstruction, DecrementWishInstruction,
-    DisableMoveInstruction, EnableMoveInstruction, FormeChangeInstruction, HealInstruction,
-    Instruction, RemoveVolatileStatusInstruction, SetFutureSightInstruction,
+    ChangeVolatileStatusDurationInstruction, ChangeWeather, ChangeWishInstruction,
+    DamageInstruction, DecrementFutureSightInstruction, DecrementPPInstruction,
+    DecrementRestTurnsInstruction, DecrementWishInstruction, DisableMoveInstruction,
+    EnableMoveInstruction, FormeChangeInstruction, HealInstruction, Instruction,
+    RemoveVolatileStatusInstruction, SetFutureSightInstruction,
     SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction, StateInstructions,
     SwitchInstruction, ToggleBatonPassingInstruction, ToggleTrickRoomInstruction,
 };
@@ -2750,13 +2751,6 @@ fn test_consecutive_protect_while_paralyzed() {
 #[test]
 fn test_outrage_locking() {
     let mut state = State::default();
-    state.side_one.get_active().moves[&PokemonMoveIndex::M0] = Move {
-        id: Choices::OUTRAGE,
-        disabled: false,
-        pp: 16,
-        choice: MOVES.get(&Choices::OUTRAGE).unwrap().clone(),
-    };
-
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,
         Choices::OUTRAGE,
@@ -2785,6 +2779,54 @@ fn test_outrage_locking() {
             Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
                 side_ref: SideReference::SideOne,
                 volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+            }),
+            Instruction::ChangeVolatileStatusDuration(ChangeVolatileStatusDurationInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_outrage_fatigue_causing_confusion() {
+    let mut state = State::default();
+    state
+        .side_one
+        .volatile_statuses
+        .insert(PokemonVolatileStatus::LOCKEDMOVE);
+    state.side_one.volatile_status_durations.lockedmove = 2;
+    state.side_one.get_active().moves.m1.disabled = true;
+    state.side_one.get_active().moves.m2.disabled = true;
+    state.side_one.get_active().moves.m3.disabled = true;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::OUTRAGE,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 94,
+            }),
+            Instruction::ChangeVolatileStatusDuration(ChangeVolatileStatusDurationInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                amount: -2,
+            }),
+            Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+            }),
+            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
         ],
     }];
@@ -5884,6 +5926,43 @@ fn test_simple_in_gen4_doubles_effective_boost() {
 
     assert_eq!(expected_regular_instructions, regular_instructions);
     assert_eq!(expected_simple_instructions, simple_instructions);
+}
+
+#[test]
+fn test_switching_out_with_lockedmove_turns_resets() {
+    let mut state = State::default();
+    state.side_one.volatile_status_durations.lockedmove = 1;
+    state
+        .side_one
+        .volatile_statuses
+        .insert(PokemonVolatileStatus::LOCKEDMOVE);
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::None,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::ChangeVolatileStatusDuration(ChangeVolatileStatusDurationInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+                amount: -1,
+            }),
+            Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                side_ref: SideReference::SideOne,
+                volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideOne,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
 }
 
 #[test]
@@ -12600,6 +12679,71 @@ fn test_focuspunch_after_not_getting_hit() {
             side_ref: SideReference::SideTwo,
             damage_amount: 100,
         })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_custap_berry_activates_less_than_25_percent() {
+    let mut state = State::default();
+    state.side_two.get_active().hp = 1;
+    state.side_two.get_active().speed = 100;
+    state.side_one.get_active().hp = 24;
+    state.side_one.get_active().speed = 50; // slower than side_two
+    state.side_one.get_active().maxhp = 100;
+    state.side_one.get_active().item = Items::CUSTAPBERRY;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::TACKLE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::ChangeItem(ChangeItemInstruction {
+                side_ref: SideReference::SideOne,
+                current_item: Items::CUSTAPBERRY,
+                new_item: Items::NONE,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_moving_second_does_not_consume_custap_berry() {
+    let mut state = State::default();
+    state.side_two.get_active().hp = 1;
+    state.side_two.get_active().speed = 100;
+    state.side_one.get_active().hp = 50; // damage from side_two puts under 25%
+    state.side_one.get_active().speed = 50; // slower than side_two
+    state.side_one.get_active().maxhp = 100;
+    state.side_one.get_active().item = Items::CUSTAPBERRY;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::TACKLE,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 48,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 1,
+            }),
+        ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
