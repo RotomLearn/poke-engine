@@ -66,11 +66,13 @@ pub mod items;
 pub mod state;
 
 pub mod choices;
+pub mod embedding;
 pub mod inspect_state;
 pub mod instruction;
 pub mod io;
 pub mod mcts;
 pub mod mcts_az;
+pub mod mcts_pruned;
 pub mod mcts_vn;
 pub mod observation;
 pub mod pokemon;
@@ -135,9 +137,24 @@ macro_rules! define_enum_with_from_str {
                 }
             }
         }
+
         impl Into<$repr> for $name {
             fn into(self) -> $repr {
                 self as $repr
+            }
+        }
+
+        impl $name {
+            pub fn iter() -> Vec<$name> {
+                vec![
+                    $(
+                        $name::$variant,
+                    )+
+                ]
+            }
+
+            pub fn variant_count() -> usize {
+                Self::iter().len()
             }
         }
     };
@@ -185,9 +202,24 @@ macro_rules! define_enum_with_from_str {
                 }
             }
         }
+
         impl Into<$repr> for $name {
             fn into(self) -> $repr {
                 self as $repr
+            }
+        }
+
+        impl $name {
+            pub fn iter() -> Vec<$name> {
+                vec![
+                    $(
+                        $name::$variant,
+                    )+
+                ]
+            }
+
+            pub fn variant_count() -> usize {
+                Self::iter().len()
             }
         }
     };

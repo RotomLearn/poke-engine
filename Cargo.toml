@@ -30,6 +30,7 @@ parking_lot = "0.12"
 chrono = "0.4"
 tch = {version = "0.19"}
 rand_distr = "0.5.1"
+ndarray = "0.16.1"
 
 [features]
 remove_low_chance_instructions = []

@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
+use crate::choices;
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
+use crate::embedding;
 use crate::evaluate::evaluate;
 use crate::generate_instructions::{
     calculate_both_damage_rolls, generate_instructions_from_move_pair,
@@ -10,12 +12,17 @@ use crate::mcts::{perform_mcts, MctsResult};
 use crate::mcts_az::{
     perform_mcts_az, perform_mcts_az_with_forced, AZParams, MctsResultAZ, NeuralNet,
 };
-use crate::mcts_vn::{perform_mcts_vn, MctsResultVN, ValueNetwork};
+use crate::mcts_pruned::{perform_mcts_pruned_batched, JointNetwork, MctsResultPruned};
+use crate::mcts_vn::{perform_mcts_vn_batched, MctsResultVN, ValueNetwork};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
 use clap::Parser;
+use ndarray::Array2;
+use serde_json::to_string_pretty;
+use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::path::PathBuf;
@@ -23,6 +30,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tch::Device;
+
 struct IOData {
     state: State,
     instruction_list: Vec<Vec<Instruction>>,
@@ -45,10 +53,12 @@ enum SubCommand {
     MonteCarloTreeSearch(MonteCarloTreeSearch),
     MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
     MonteCarloTreeSearchVN(MonteCarloTreeSearchVN),
+    MonteCarloTreeSearchPruned(MonteCarloTreeSearchPruned),
     MonteCarloTreeSearchAZForced(MonteCarloTreeSearchAZForced),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     GenerateObservation(GenerateObservation),
+    GenerateEmbeddings(GenerateEmbeddings),
     SelfPlay(SelfPlay),
 }
 
@@ -69,6 +79,9 @@ struct GenerateObservation {
     #[clap(short, long, required = true)]
     output_file: String,
 }
+
+#[derive(Parser)]
+struct GenerateEmbeddings {}
 
 #[derive(Parser)]
 struct Expectiminimax {
@@ -137,6 +150,18 @@ struct MonteCarloTreeSearchAZForced {
 
     #[clap(short, long, default_value_t = 0.3)]
     alpha: f32,
+}
+
+#[derive(Parser)]
+struct MonteCarloTreeSearchPruned {
+    #[clap(short, long, required = true)]
+    state: String,
+
+    #[clap(short, long, default_value_t = 5000)]
+    time_to_search_ms: u64,
+
+    #[clap(short, long, required = true)]
+    model_path: String,
 }
 
 #[derive(Parser)]
@@ -315,6 +340,185 @@ impl Pokemon {
             moves.join(", ")
         )
     }
+}
+
+fn to_readable_name(variant: &str) -> String {
+    // Remove common prefixes like HIDDEN_POWER or G_MAX
+    let name = variant
+        .trim_start_matches("HIDDENPOWER")
+        .trim_start_matches("G_MAX")
+        .trim_start_matches("MAX_");
+
+    // Split by underscores
+    let parts: Vec<&str> = name.split('_').collect();
+
+    // Capitalize each part and join with spaces
+    parts
+        .iter()
+        .map(|&part| {
+            if part.is_empty() {
+                String::new()
+            } else if part.len() == 1 {
+                part.to_uppercase()
+            } else {
+                let mut c = part.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn generate_enum_mapping<T>(
+    enum_values: &[(T, usize)],
+    filename: &str,
+    name_transform: fn(&str) -> String,
+) -> std::io::Result<()>
+where
+    T: std::fmt::Debug,
+{
+    let mut map = HashMap::new();
+
+    for (value, idx) in enum_values {
+        // Convert enum variant to string
+        let variant_str = format!("{:?}", value);
+
+        // Apply name transformation
+        let readable_name = name_transform(&variant_str);
+
+        // Add to mapping (handle special case for index 0)
+        map.insert(
+            idx.to_string(),
+            if *idx == 0 && readable_name.is_empty() {
+                "None".to_string()
+            } else {
+                readable_name
+            },
+        );
+    }
+
+    // Convert to JSON
+    let json_str = to_string_pretty(&map)?;
+
+    // Write to file
+    let mut file = File::create(filename)?;
+    file.write_all(json_str.as_bytes())?;
+
+    println!("Generated mapping file: {}", filename);
+    Ok(())
+}
+
+fn write_embeddings_to_file<T>(
+    embeddings: &[(T, ndarray::Array1<f32>)],
+    filename: &str,
+    id_to_u32: fn(T) -> u32,
+) -> std::io::Result<()>
+where
+    T: Copy,
+{
+    let num_entries = embeddings.len();
+    if num_entries == 0 {
+        println!("No embeddings to write for {}", filename);
+        return Ok(());
+    }
+
+    let embedding_dim = embeddings[0].1.len();
+
+    // Create a matrix to store all embeddings
+    let mut matrix = Array2::<f32>::zeros((num_entries, embedding_dim));
+    let mut ids = Vec::with_capacity(num_entries);
+
+    for (i, (id, embedding)) in embeddings.iter().enumerate() {
+        matrix.row_mut(i).assign(embedding);
+        ids.push(id_to_u32(*id));
+    }
+
+    // Save embeddings to file
+    let mut file = File::create(filename)?;
+    let shape = matrix.shape();
+
+    // Write header: rows, cols
+    file.write_all(&(shape[0] as u32).to_le_bytes())?;
+    file.write_all(&(shape[1] as u32).to_le_bytes())?;
+
+    // Write IDs
+    for id in &ids {
+        file.write_all(&id.to_le_bytes())?;
+    }
+
+    // Write flat data
+    for &val in matrix.iter() {
+        file.write_all(&val.to_le_bytes())?;
+    }
+
+    println!(
+        "Saved {} {} embeddings with dimension {}",
+        num_entries, filename, embedding_dim
+    );
+    Ok(())
+}
+
+fn generate_move_embeddings() -> std::io::Result<()> {
+    // Use the existing MOVES hashmap from choices.rs
+    let move_embeddings = embedding::create_all_move_embeddings(&*choices::MOVES);
+
+    // Convert HashMap entries to a Vec of tuples for sorted writing
+    let mut sorted_moves: Vec<_> = move_embeddings.into_iter().collect();
+    sorted_moves.sort_by_key(|(choice_id, _)| *choice_id as u16);
+
+    // Create a vector of (enum, index) pairs for name mapping
+    let named_moves: Vec<_> = sorted_moves
+        .iter()
+        .enumerate()
+        .map(|(idx, (choice_id, _))| (*choice_id, idx))
+        .collect();
+
+    // Generate name mapping file
+    generate_enum_mapping(&named_moves, "move_names.json", to_readable_name)?;
+
+    write_embeddings_to_file(&sorted_moves, "move_embeddings.bin", |choice| {
+        choice as u16 as u32
+    })
+}
+
+fn generate_ability_embeddings() -> std::io::Result<()> {
+    let ability_embeddings = embedding::create_all_ability_embeddings();
+
+    // Create a vector of (enum, index) pairs for name mapping
+    let named_abilities: Vec<_> = ability_embeddings
+        .iter()
+        .enumerate()
+        .map(|(idx, (ability, _))| (*ability, idx))
+        .collect();
+
+    // Generate name mapping file
+    generate_enum_mapping(&named_abilities, "ability_names.json", to_readable_name)?;
+
+    write_embeddings_to_file(&ability_embeddings, "ability_embeddings.bin", |ability| {
+        ability as u16 as u32
+    })
+}
+
+fn generate_item_embeddings() -> std::io::Result<()> {
+    let item_embeddings = embedding::create_all_item_embeddings();
+
+    // Create a vector of (enum, index) pairs for name mapping
+    let named_items: Vec<_> = item_embeddings
+        .iter()
+        .enumerate()
+        .map(|(idx, (item, _))| (*item, idx))
+        .collect();
+
+    // Generate name mapping file
+    generate_enum_mapping(&named_items, "item_names.json", to_readable_name)?;
+
+    write_embeddings_to_file(&item_embeddings, "item_embeddings.bin", |item| {
+        item as u16 as u32
+    })
 }
 
 pub fn io_get_all_options(state: &State) -> (Vec<MoveChoice>, Vec<MoveChoice>) {
@@ -558,6 +762,44 @@ fn pprint_mcts_result_az(state: &State, result: MctsResultAZ) {
     }
 }
 
+fn pprint_mcts_result_pruned(state: &State, result: MctsResultPruned) {
+    println!("\nTotal Iterations: {}\n", result.iteration_count);
+    println!("Maximum Depth: {}", result.max_depth);
+    println!("Side One:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s1.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
+        );
+    }
+
+    println!("Side Two:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s2.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
+        );
+    }
+}
+
 fn pprint_mcts_result_vn(state: &State, result: MctsResultVN) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
     println!("Maximum Depth: {}", result.max_depth);
@@ -732,6 +974,26 @@ pub fn main() {
                 generate_observation_output(state_string, args.output_file.trim())
                     .expect("Failed to write inspection file");
             }
+            SubCommand::GenerateEmbeddings(_) => {
+                println!("Generating Pokemon embeddings...");
+
+                // Generate ability embeddings
+                if let Err(e) = generate_ability_embeddings() {
+                    eprintln!("Error generating ability embeddings: {}", e);
+                }
+
+                // Generate item embeddings
+                if let Err(e) = generate_item_embeddings() {
+                    eprintln!("Error generating item embeddings: {}", e);
+                }
+
+                // Generate move embeddings
+                if let Err(e) = generate_move_embeddings() {
+                    eprintln!("Error generating move embeddings: {}", e);
+                }
+
+                println!("Embeddings generation complete!");
+            }
             SubCommand::Expectiminimax(expectiminimax) => {
                 state = State::deserialize(expectiminimax.state.as_str());
                 (side_one_options, side_two_options) = io_get_all_options(&state);
@@ -785,6 +1047,24 @@ pub fn main() {
                 pprint_mcts_result_az(&state, result);
             }
 
+            SubCommand::MonteCarloTreeSearchPruned(mcts_pruned) => {
+                state = State::deserialize(mcts_pruned.state.as_str());
+                let device = Device::Cpu; // or Device::Cuda(0) for GPU
+                let model = match JointNetwork::new(&mcts_pruned.model_path, device) {
+                    Ok(model) => Arc::new(model),
+                    Err(e) => panic!("Failed to load model: {}", e),
+                };
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let result = perform_mcts_pruned_batched(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts_pruned.time_to_search_ms),
+                    model.clone(),
+                );
+                pprint_mcts_result_pruned(&state, result);
+            }
+
             SubCommand::MonteCarloTreeSearchVN(mcts_vn) => {
                 state = State::deserialize(mcts_vn.state.as_str());
                 let device = Device::Cpu; // or Device::Cuda(0) for GPU
@@ -793,7 +1073,7 @@ pub fn main() {
                     Err(e) => panic!("Failed to load model: {}", e),
                 };
                 (side_one_options, side_two_options) = io_get_all_options(&state);
-                let result = perform_mcts_vn(
+                let result = perform_mcts_vn_batched(
                     &mut state,
                     side_one_options.clone(),
                     side_two_options.clone(),

@@ -20,7 +20,42 @@ const C_UCB: f32 = 2.0;
 // Constants for hybrid evaluation
 const NEURAL_NET_DEPTH_THRESHOLD: i32 = 6; // Use neural net only after this search depth
 const MAX_NEURAL_NET_CALLS_PER_ITERATION: usize = 100000; // Limit neural net calls per iteration
-const MODEL_IMPORTANCE: f32 = 200.0; // Importance of neural network evaluation
+const MODEL_IMPORTANCE: f32 = 1.0; // Importance of neural network evaluation
+
+const BATCH_SIZE: usize = 32; // Target batch size for neural evaluations
+
+// New batch collection structure
+pub struct EvaluationBatch {
+    pub states: Vec<State>,
+    pub node_ptrs: Vec<*mut Node>,
+    pub paths: Vec<Vec<StateInstructions>>,
+    pub original_state: State,
+}
+
+impl EvaluationBatch {
+    pub fn new(original_state: State, capacity: usize) -> Self {
+        EvaluationBatch {
+            states: Vec::with_capacity(capacity),
+            node_ptrs: Vec::with_capacity(capacity),
+            paths: Vec::with_capacity(capacity),
+            original_state,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.states.len() >= BATCH_SIZE
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.states.clear();
+        self.node_ptrs.clear();
+        self.paths.clear();
+    }
+}
 
 pub struct ValueNetwork {
     model: CModule,
@@ -267,6 +302,126 @@ impl Node {
         }
     }
 
+    // New method to collect a leaf node for batch evaluation
+    pub unsafe fn collect_leaf_node(
+        root: *mut Node,
+        state: &mut State,
+    ) -> (*mut Node, Vec<StateInstructions>, i32) {
+        // Added depth return value
+        let mut current = root;
+        let mut path = Vec::new();
+        let mut depth = 0; // Explicitly track depth
+
+        // Selection phase - traverse to leaf
+        loop {
+            let s1_choice = (*current).maximize_ucb_for_side(&(*current).s1_options);
+            let s2_choice = (*current).maximize_ucb_for_side(&(*current).s2_options);
+
+            if let Some(children) = (*current).children.get(&(s1_choice, s2_choice)) {
+                if !children.is_empty() {
+                    // Sample based on weighted probabilities
+                    let child_ptr =
+                        (*current).sample_node(children as *const Vec<Node> as *mut Vec<Node>);
+
+                    // Add this step to the path
+                    path.push((*child_ptr).instructions.clone());
+
+                    // Apply instructions to the state
+                    state.apply_instructions(&(*child_ptr).instructions.instruction_list);
+
+                    // Move to child and increase depth
+                    current = child_ptr;
+                    depth += 1; // Increment depth
+                    continue;
+                }
+            }
+
+            // If we get here, we've found an unexpanded node or no children
+            break;
+        }
+
+        // If we need to expand this node
+        let s1_choice = (*current).maximize_ucb_for_side(&(*current).s1_options);
+        let s2_choice = (*current).maximize_ucb_for_side(&(*current).s2_options);
+
+        if !(*current).children.contains_key(&(s1_choice, s2_choice))
+            && state.battle_is_over() == 0.0
+        {
+            // Expand the node
+            let s1_move = &(*current).s1_options[s1_choice].move_choice;
+            let s2_move = &(*current).s2_options[s2_choice].move_choice;
+
+            if s1_move != &MoveChoice::None || s2_move != &MoveChoice::None {
+                let should_branch_on_damage = (*current).root
+                    || ((*current).parent != std::ptr::null_mut() && (*(*current).parent).root);
+
+                let new_instructions = generate_instructions_from_move_pair(
+                    state,
+                    s1_move,
+                    s2_move,
+                    should_branch_on_damage,
+                );
+
+                if !new_instructions.is_empty() {
+                    let mut this_pair_vec = Vec::with_capacity(new_instructions.len());
+
+                    for instruction in new_instructions {
+                        // Apply instructions to see the resulting state
+                        state.apply_instructions(&instruction.instruction_list);
+
+                        // Get options for the new state
+                        let (s1_options, s2_options) = state.get_all_options();
+
+                        // Create the new node - set depth explicitly based on parent + 1
+                        let mut new_node = Node::new(s1_options, s2_options, 0); // Depth will be set based on path
+                        new_node.parent = current;
+                        new_node.instructions = instruction.clone();
+                        new_node.s1_choice = s1_choice;
+                        new_node.s2_choice = s2_choice;
+                        new_node.heuristic_value = calc_heuristic_evaluation(state);
+
+                        // Revert the state for next instruction
+                        state.reverse_instructions(&instruction.instruction_list);
+
+                        this_pair_vec.push(new_node);
+                    }
+
+                    // Sample one outcome and apply its instructions
+                    let weights: Vec<f64> = this_pair_vec
+                        .iter()
+                        .map(|x| x.instructions.percentage as f64)
+                        .collect();
+
+                    let mut rng = thread_rng();
+                    let dist = WeightedIndex::new(weights).unwrap();
+                    let chosen_idx = dist.sample(&mut rng);
+
+                    // Apply the chosen instructions
+                    state.apply_instructions(
+                        &this_pair_vec[chosen_idx].instructions.instruction_list,
+                    );
+
+                    // Record this path step
+                    path.push(this_pair_vec[chosen_idx].instructions.clone());
+
+                    // Add all possible children to the node
+                    (*current)
+                        .children
+                        .insert((s1_choice, s2_choice), this_pair_vec);
+
+                    // Return the chosen child and increment depth for expansion
+                    let child_ptr = &mut (*current)
+                        .children
+                        .get_mut(&(s1_choice, s2_choice))
+                        .unwrap()[chosen_idx] as *mut Node;
+                    return (child_ptr, path, depth + 1); // +1 for expansion
+                }
+            }
+        }
+
+        // Return current node if no expansion happened
+        (current, path, depth)
+    }
     fn get_max_depth(&self) -> usize {
         if self.children.is_empty() {
             return 0;
@@ -585,6 +740,169 @@ pub fn perform_mcts_vn(
     }
 
     let max_depth = root_node.get_max_depth();
+
+    MctsResultVN {
+        s1: root_node
+            .s1_options
+            .iter()
+            .map(|v| MctsSideResultVN {
+                move_choice: v.move_choice.clone(),
+                total_score: v.total_score,
+                visits: v.visits,
+            })
+            .collect(),
+        s2: root_node
+            .s2_options
+            .iter()
+            .map(|v| MctsSideResultVN {
+                move_choice: v.move_choice.clone(),
+                total_score: v.total_score,
+                visits: v.visits,
+            })
+            .collect(),
+        iteration_count: root_node.times_visited,
+        max_depth,
+        neural_evals_count: total_neural_evals,
+    }
+}
+
+// New batched MCTS function
+pub fn do_mcts_batch(
+    root_node: &mut Node,
+    eval_batch: &mut EvaluationBatch,
+    network: &ValueNetwork,
+    neural_eval_counter: &mut usize,
+) {
+    // Collect leaf nodes until batch is ready
+    let mut temp_state = eval_batch.original_state.clone();
+
+    // Try to collect a leaf node - now returns explicit depth
+    let (node_ptr, path, depth) =
+        unsafe { Node::collect_leaf_node(root_node as *mut Node, &mut temp_state) };
+
+    // Debug print
+    // println!("Collected node at depth: {}", depth);
+
+    // Only use neural network for deeper nodes
+    let use_neural = depth >= NEURAL_NET_DEPTH_THRESHOLD
+        && *neural_eval_counter < MAX_NEURAL_NET_CALLS_PER_ITERATION;
+
+    if !use_neural {
+        // If we're not using neural evaluation, just use heuristic
+        let heuristic_value = sigmoid(unsafe { (*node_ptr).heuristic_value });
+        unsafe {
+            (*node_ptr).backpropagate(heuristic_value, &mut temp_state, false);
+        }
+        return;
+    }
+
+    // Add to batch for neural evaluation
+    eval_batch.states.push(temp_state);
+    eval_batch.node_ptrs.push(node_ptr);
+    eval_batch.paths.push(path);
+    *neural_eval_counter += 1;
+
+    // If batch is ready, evaluate and backpropagate
+    if eval_batch.is_ready() {
+        process_evaluation_batch(eval_batch, network);
+    }
+}
+
+// Process a full batch of evaluations
+fn process_evaluation_batch(batch: &mut EvaluationBatch, network: &ValueNetwork) {
+    if batch.is_empty() {
+        return;
+    }
+
+    // Evaluate all states in batch
+    let values = network.evaluate_batch(&batch.states);
+
+    // Backpropagate each result
+    for i in 0..batch.states.len() {
+        let node_ptr = batch.node_ptrs[i];
+        let value = values[i];
+
+        // Store neural evaluation in node
+        unsafe {
+            (*node_ptr).neural_value = Some(value);
+        }
+
+        // Create a new state for backpropagation
+        let mut backprop_state = batch.original_state.clone();
+
+        // Apply path to reach this node
+        for instruction in &batch.paths[i] {
+            backprop_state.apply_instructions(&instruction.instruction_list);
+        }
+
+        // Backpropagate the value
+        unsafe {
+            (*node_ptr).backpropagate(value, &mut backprop_state, true);
+        }
+    }
+
+    // Clear batch for reuse
+    batch.clear();
+}
+
+// Modified main MCTS function to use batching
+pub fn perform_mcts_vn_batched(
+    state: &mut State,
+    side_one_options: Vec<MoveChoice>,
+    side_two_options: Vec<MoveChoice>,
+    max_time: Duration,
+    network: Option<Arc<ValueNetwork>>,
+) -> MctsResultVN {
+    // Create root node at depth 0
+    let mut root_node = Node::new(side_one_options, side_two_options, 0);
+    root_node.root = true;
+
+    // Evaluate root with heuristic
+    root_node.heuristic_value = calc_heuristic_evaluation(state);
+
+    // Setup for batched evaluation
+    let mut eval_batch = EvaluationBatch::new(state.clone(), BATCH_SIZE);
+    let mut total_neural_evals = 0;
+
+    let start_time = std::time::Instant::now();
+
+    while start_time.elapsed() < max_time {
+        // Reset counter for each batch of iterations
+        let mut neural_eval_counter = 0;
+
+        // Process a batch of iterations
+        for _ in 0..100 {
+            if let Some(ref net) = network {
+                do_mcts_batch(
+                    &mut root_node,
+                    &mut eval_batch,
+                    net,
+                    &mut neural_eval_counter,
+                );
+            } else {
+                // Fallback to regular MCTS with heuristic only
+                let (mut new_node, s1_move, s2_move) = unsafe { root_node.selection(state) };
+                new_node = unsafe { (*new_node).expand(state, s1_move, s2_move) };
+                let heuristic_value = sigmoid(unsafe { (*new_node).heuristic_value });
+                unsafe { (*new_node).backpropagate(heuristic_value, state, false) };
+            }
+        }
+
+        // Process any remaining items in batch
+        if let Some(ref net) = network {
+            if !eval_batch.is_empty() {
+                process_evaluation_batch(&mut eval_batch, net);
+            }
+        }
+
+        total_neural_evals += neural_eval_counter;
+
+        if root_node.times_visited >= 10_000_000 {
+            break;
+        }
+    }
+
+    let max_depth = 0;
 
     MctsResultVN {
         s1: root_node
