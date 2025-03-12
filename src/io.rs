@@ -12,6 +12,7 @@ use crate::mcts::{perform_mcts, MctsResult};
 use crate::mcts_az::{
     perform_mcts_az, perform_mcts_az_with_forced, AZParams, MctsResultAZ, NeuralNet,
 };
+use crate::mcts_pn::{perform_mcts_pn_batched, MctsResultPN, PolicyNetwork};
 use crate::mcts_pruned::{perform_mcts_pruned_batched, JointNetwork, MctsResultPruned};
 use crate::mcts_vn::{perform_mcts_vn_batched, MctsResultVN, ValueNetwork};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
@@ -54,6 +55,7 @@ enum SubCommand {
     MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
     MonteCarloTreeSearchVN(MonteCarloTreeSearchVN),
     MonteCarloTreeSearchPruned(MonteCarloTreeSearchPruned),
+    MonteCarloTreeSearchPN(MonteCarloTreeSearchPN),
     MonteCarloTreeSearchAZForced(MonteCarloTreeSearchAZForced),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
@@ -162,6 +164,21 @@ struct MonteCarloTreeSearchPruned {
 
     #[clap(short, long, required = true)]
     model_path: String,
+}
+
+#[derive(Parser)]
+struct MonteCarloTreeSearchPN {
+    #[clap(short, long, required = true)]
+    state: String,
+
+    #[clap(short, long, default_value_t = 3000)]
+    time_to_search_ms: u64,
+
+    #[clap(short, long, required = true)]
+    model_path: String,
+
+    #[clap(short, long, default_value_t = 5)]
+    top_k: usize,
 }
 
 #[derive(Parser)]
@@ -800,6 +817,44 @@ fn pprint_mcts_result_pruned(state: &State, result: MctsResultPruned) {
     }
 }
 
+fn pprint_mcts_result_pn(state: &State, result: MctsResultPN) {
+    println!("\nTotal Iterations: {}\n", result.iteration_count);
+    println!("Maximum Depth: {}", result.max_depth);
+    println!("Side One:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s1.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
+        );
+    }
+
+    println!("Side Two:");
+    println!(
+        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
+        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
+    );
+    for x in result.s2.iter() {
+        println!(
+            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
+            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
+            x.total_score,
+            x.total_score / x.visits as f32,
+            x.visits,
+            (x.visits as f32 / result.iteration_count as f32) * 100.0,
+            x.prior_prob
+        );
+    }
+}
+
 fn pprint_mcts_result_vn(state: &State, result: MctsResultVN) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
     println!("Maximum Depth: {}", result.max_depth);
@@ -1063,6 +1118,25 @@ pub fn main() {
                     model.clone(),
                 );
                 pprint_mcts_result_pruned(&state, result);
+            }
+
+            SubCommand::MonteCarloTreeSearchPN(mcts_pn) => {
+                state = State::deserialize(mcts_pn.state.as_str());
+                let device = Device::Cpu; // or Device::Cuda(0) for GPU
+                let model = match PolicyNetwork::new(&mcts_pn.model_path, device) {
+                    Ok(model) => Arc::new(model),
+                    Err(e) => panic!("Failed to load model: {}", e),
+                };
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let result = perform_mcts_pn_batched(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts_pn.time_to_search_ms),
+                    model.clone(),
+                    mcts_pn.top_k,
+                );
+                pprint_mcts_result_pn(&state, result);
             }
 
             SubCommand::MonteCarloTreeSearchVN(mcts_vn) => {

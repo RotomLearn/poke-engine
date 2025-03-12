@@ -191,6 +191,20 @@ impl Node {
             }
         }
     }
+
+    pub fn rollout_evolved(&mut self, state: &mut State, root_eval: &f32) -> f32 {
+        let battle_is_over = state.battle_is_over();
+        if battle_is_over == 0.0 {
+            let eval = evolved_evaluate(state);
+            sigmoid(eval - root_eval)
+        } else {
+            if battle_is_over == -1.0 {
+                0.0
+            } else {
+                battle_is_over
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -304,4 +318,67 @@ pub fn perform_mcts(
     };
 
     result
+}
+
+// Import the evolved evaluator
+use crate::evolved_evaluate::evaluate as evolved_evaluate;
+
+// This is a copy of the original perform_mcts function but using evolved_evaluate
+pub fn perform_mcts_evolved(
+    state: &mut State,
+    side_one_options: Vec<MoveChoice>,
+    side_two_options: Vec<MoveChoice>,
+    max_time: Duration,
+) -> MctsResult {
+    let mut root_node = Node::new(side_one_options, side_two_options);
+    root_node.root = true;
+
+    // Use evolved_evaluate instead of evaluate
+    let root_eval = evolved_evaluate(state);
+    let start_time = std::time::Instant::now();
+    while start_time.elapsed() < max_time {
+        for _ in 0..1000 {
+            do_mcts_evolved(&mut root_node, state, &root_eval);
+        }
+
+        if root_node.times_visited == 10_000_000 {
+            break;
+        }
+    }
+
+    // Rest is the same as original perform_mcts
+    let max_depth = root_node.get_max_depth();
+
+    let result = MctsResult {
+        s1: root_node
+            .s1_options
+            .iter()
+            .map(|v| MctsSideResult {
+                move_choice: v.move_choice.clone(),
+                total_score: v.total_score,
+                visits: v.visits,
+            })
+            .collect(),
+        s2: root_node
+            .s2_options
+            .iter()
+            .map(|v| MctsSideResult {
+                move_choice: v.move_choice.clone(),
+                total_score: v.total_score,
+                visits: v.visits,
+            })
+            .collect(),
+        iteration_count: root_node.times_visited,
+        max_depth,
+    };
+
+    result
+}
+
+// Copy of do_mcts that uses evolved_evaluate
+fn do_mcts_evolved(root_node: &mut Node, state: &mut State, root_eval: &f32) {
+    let (mut new_node, s1_move, s2_move) = unsafe { root_node.selection(state) };
+    new_node = unsafe { (*new_node).expand(state, s1_move, s2_move) };
+    let rollout_result = unsafe { (*new_node).rollout_evolved(state, root_eval) };
+    unsafe { (*new_node).backpropagate(rollout_result, state) }
 }

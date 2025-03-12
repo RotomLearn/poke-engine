@@ -15,7 +15,7 @@ use tch::{CModule, Device, Tensor};
 
 // Constants for PUCT formula
 const C_PUCT: f32 = 2.0;
-const TOP_K_MOVES: usize = 5; // Number of top moves to consider
+const TOP_K_MOVES: usize = 13; // Number of top moves to consider
 const BATCH_SIZE: usize = 64; // Target batch size for neural evaluations
 
 pub struct JointEvaluationBatch {
@@ -472,12 +472,8 @@ impl Node {
         let mut choice = 0;
         let mut best_score = f32::MIN;
 
-        // Get the estimated value of this position
-        let position_value = self.value;
-
         for (index, node) in side_map.iter().enumerate() {
-            // Use value-aware PUCT
-            let this_score = node.puct_score_value_aware(self.times_visited, position_value);
+            let this_score = node.puct_score(self.times_visited);
             if this_score > best_score {
                 best_score = this_score;
                 choice = index;
@@ -584,8 +580,6 @@ impl Node {
         self.times_visited += 1;
         self.value_sum += value;
 
-        self.value = self.value_sum / self.times_visited as f32;
-
         if self.root {
             return;
         }
@@ -612,31 +606,6 @@ pub struct MoveNode {
 }
 
 impl MoveNode {
-    pub fn puct_score_value_aware(&self, parent_visits: i64, parent_value: f32) -> f32 {
-        if self.visits == 0 {
-            return f32::INFINITY;
-        }
-
-        let q_value = self.total_score / self.visits as f32;
-
-        // Value-aware exploration factor - reduce exploration when parent value is high
-        let exploration_factor = if parent_value > 0.8 {
-            // In winning positions, prioritize exploitation over exploration
-            C_PUCT * 0.5
-        } else if parent_value < 0.2 {
-            // In losing positions, increase exploration
-            C_PUCT * 1.5
-        } else {
-            // Normal positions
-            C_PUCT
-        };
-
-        let u_value = exploration_factor * self.prior_prob * (parent_visits as f32).sqrt()
-            / (1.0 + self.visits as f32);
-
-        q_value + u_value
-    }
-
     pub fn puct_score(&self, parent_visits: i64) -> f32 {
         if self.visits == 0 {
             return f32::INFINITY;

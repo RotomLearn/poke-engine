@@ -364,7 +364,20 @@ impl Battle {
             // Rest of the turn logic...
             let p1_choice_str = self.format_move(&p1_choice.chosen_move, true);
             let p2_choice_str = self.format_move(&p2_choice.chosen_move, false);
-
+            if let Some(file) = &mut self.log_file {
+                writeln!(
+                    file,
+                    "\nPlayer 1 chose: {} ({:?})",
+                    p1_choice_str, p1_choice.chosen_move
+                )?;
+                writeln!(file, "Player 1 move weights: {:?}", p1_choice.move_weights)?;
+                writeln!(
+                    file,
+                    "Player 2 chose: {} ({:?})",
+                    p2_choice_str, p2_choice.chosen_move
+                )?;
+                writeln!(file, "Player 2 move weights: {:?}", p2_choice.move_weights)?;
+            }
             // Record training data if we have a recorder
             if let Some(recorder) = &mut self.training_recorder {
                 recorder.record_turn(

@@ -58,6 +58,7 @@ pub mod choice_effects;
 pub mod damage_calc;
 #[cfg(not(any(feature = "gen2", feature = "gen1")))]
 pub mod evaluate;
+pub mod evolved_evaluate;
 #[cfg(not(any(feature = "gen2", feature = "gen1")))]
 pub mod generate_instructions;
 #[cfg(not(any(feature = "gen2", feature = "gen1")))]
@@ -72,6 +73,7 @@ pub mod instruction;
 pub mod io;
 pub mod mcts;
 pub mod mcts_az;
+pub mod mcts_pn;
 pub mod mcts_pruned;
 pub mod mcts_vn;
 pub mod observation;
