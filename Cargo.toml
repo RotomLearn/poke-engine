@@ -31,6 +31,7 @@ chrono = "0.4"
 tch = {version = "0.19"}
 rand_distr = "0.5.1"
 ndarray = "0.16.1"
+colored = "3.0.0"
 
 [features]
 remove_low_chance_instructions = []

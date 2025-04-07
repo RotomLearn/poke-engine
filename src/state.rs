@@ -297,7 +297,7 @@ impl SideReference {
 
 define_enum_with_from_str! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq, Copy, Clone)]
+    #[derive(Debug, PartialEq, Copy, Clone, Eq, Hash, PartialOrd, Ord)]
     Weather {
         NONE,
         SUN,
@@ -318,7 +318,7 @@ pub struct StateWeather {
 
 define_enum_with_from_str! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq, Copy, Clone)]
+    #[derive(Debug, PartialEq, Copy, Clone, Eq, PartialOrd, Ord)]
     Terrain {
         NONE,
         ELECTRICTERRAIN,
@@ -342,7 +342,7 @@ pub struct StateTrickRoom {
 
 define_enum_with_from_str! {
     #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     PokemonType {
         NORMAL,
         FIRE,
@@ -368,7 +368,7 @@ define_enum_with_from_str! {
     default = TYPELESS
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
 pub enum PokemonBoostableStat {
     Attack,
     Defense,
@@ -913,7 +913,7 @@ impl Default for Pokemon {
             level: 100,
             types: (PokemonType::NORMAL, PokemonType::TYPELESS),
             base_types: (PokemonType::NORMAL, PokemonType::TYPELESS),
-            hp: 100,
+            hp: 0,
             maxhp: 100,
             ability: Abilities::NONE,
             base_ability: Abilities::NONE,

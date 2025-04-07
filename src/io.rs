@@ -8,15 +8,15 @@ use crate::generate_instructions::{
 };
 use crate::inspect_state::generate_observation_output;
 use crate::instruction::{Instruction, StateInstructions};
+use crate::matchup_mcts::initialize_team_matchup_cache;
+use crate::matchup_mcts::{analyze_matchup_cache, perform_mcts_with_team_matchups};
+use crate::matchup_visualization_tool::MatchupVisualizer;
 use crate::mcts::{perform_mcts, MctsResult};
-use crate::mcts_az::{
-    perform_mcts_az, perform_mcts_az_with_forced, AZParams, MctsResultAZ, NeuralNet,
-};
 use crate::mcts_pn::{perform_mcts_pn_batched, MctsResultPN, PolicyNetwork};
 use crate::mcts_pruned::{perform_mcts_pruned_batched, JointNetwork, MctsResultPruned};
-use crate::mcts_vn::{perform_mcts_vn_batched, MctsResultVN, ValueNetwork};
 use crate::search::{expectiminimax_search, iterative_deepen_expectiminimax, pick_safest};
 use crate::selfplay::battle::{run_sequential_games, SharedFileWriter};
+use crate::selfplay::initialization::initialize_battle_state;
 use crate::state::{MoveChoice, Pokemon, PokemonVolatileStatus, Side, SideConditions, State};
 use clap::Parser;
 use ndarray::Array2;
@@ -52,16 +52,16 @@ enum SubCommand {
     Expectiminimax(Expectiminimax),
     IterativeDeepening(IterativeDeepening),
     MonteCarloTreeSearch(MonteCarloTreeSearch),
-    MonteCarloTreeSearchAZ(MonteCarloTreeSearchAZ),
-    MonteCarloTreeSearchVN(MonteCarloTreeSearchVN),
+    MonteCarloTreeSearchEvo(MonteCarloTreeSearchEvo),
     MonteCarloTreeSearchPruned(MonteCarloTreeSearchPruned),
     MonteCarloTreeSearchPN(MonteCarloTreeSearchPN),
-    MonteCarloTreeSearchAZForced(MonteCarloTreeSearchAZForced),
+    MonteCarloTreeSearchMU(MonteCarloTreeSearchMU),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
     GenerateObservation(GenerateObservation),
     GenerateEmbeddings(GenerateEmbeddings),
     SelfPlay(SelfPlay),
+    AnalyzeMatchups(AnalyzeMatchups),
 }
 
 #[derive(Parser)]
@@ -72,6 +72,12 @@ pub struct SelfPlay {
     pub output_file: Option<String>,
     #[clap(long)]
     pub num_games: Option<usize>,
+}
+
+#[derive(Parser)]
+pub struct AnalyzeMatchups {
+    #[clap(short, long, required = true)]
+    state: String,
 }
 
 #[derive(Parser)]
@@ -116,42 +122,20 @@ struct MonteCarloTreeSearch {
 }
 
 #[derive(Parser)]
-struct MonteCarloTreeSearchAZ {
-    #[clap(short, long, required = true)]
+struct MonteCarloTreeSearchMU {
+    #[clap(short, long, required = false)]
     state: String,
-
     #[clap(short, long, default_value_t = 5000)]
     time_to_search_ms: u64,
-
-    #[clap(short, long, required = true)]
-    model_path: String,
 }
 
 #[derive(Parser)]
-struct MonteCarloTreeSearchVN {
+struct MonteCarloTreeSearchEvo {
     #[clap(short, long, required = true)]
     state: String,
 
     #[clap(short, long, default_value_t = 5000)]
     time_to_search_ms: u64,
-
-    #[clap(short, long, required = true)]
-    model_path: String,
-}
-
-#[derive(Parser)]
-struct MonteCarloTreeSearchAZForced {
-    #[clap(short, long, required = true)]
-    state: String,
-
-    #[clap(short, long, default_value_t = 5000)]
-    time_to_search_ms: u64,
-
-    #[clap(short, long, required = true)]
-    model_path: String,
-
-    #[clap(short, long, default_value_t = 0.3)]
-    alpha: f32,
 }
 
 #[derive(Parser)]
@@ -741,44 +725,6 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
     }
 }
 
-fn pprint_mcts_result_az(state: &State, result: MctsResultAZ) {
-    println!("\nTotal Iterations: {}\n", result.iteration_count);
-    println!("Maximum Depth: {}", result.max_depth);
-    println!("Side One:");
-    println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
-        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
-    );
-    for x in result.s1.iter() {
-        println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
-            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
-            x.total_score,
-            x.total_score / x.visits as f32,
-            x.visits,
-            (x.visits as f32 / result.iteration_count as f32) * 100.0,
-            x.prior_prob
-        );
-    }
-
-    println!("Side Two:");
-    println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}{:>12}",
-        "Move", "Total Score", "Avg Score", "Visits", "% Visits", "Prior Prob"
-    );
-    for x in result.s2.iter() {
-        println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}{:>12.3}",
-            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
-            x.total_score,
-            x.total_score / x.visits as f32,
-            x.visits,
-            (x.visits as f32 / result.iteration_count as f32) * 100.0,
-            x.prior_prob
-        );
-    }
-}
-
 fn pprint_mcts_result_pruned(state: &State, result: MctsResultPruned) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
     println!("Maximum Depth: {}", result.max_depth);
@@ -851,43 +797,6 @@ fn pprint_mcts_result_pn(state: &State, result: MctsResultPN) {
             x.visits,
             (x.visits as f32 / result.iteration_count as f32) * 100.0,
             x.prior_prob
-        );
-    }
-}
-
-fn pprint_mcts_result_vn(state: &State, result: MctsResultVN) {
-    println!("\nTotal Iterations: {}\n", result.iteration_count);
-    println!("Maximum Depth: {}", result.max_depth);
-    println!("Neural Evals: {}", result.neural_evals_count);
-    println!("Side One:");
-    println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
-        "Move", "Total Score", "Avg Score", "Visits", "% Visits"
-    );
-    for x in result.s1.iter() {
-        println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
-            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
-            x.total_score,
-            x.total_score / x.visits as f32,
-            x.visits,
-            (x.visits as f32 / result.iteration_count as f32) * 100.0
-        );
-    }
-
-    println!("Side Two:");
-    println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
-        "Move", "Total Score", "Avg Score", "Visits", "% Visits"
-    );
-    for x in result.s2.iter() {
-        println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
-            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
-            x.total_score,
-            x.total_score / x.visits as f32,
-            x.visits,
-            (x.visits as f32 / result.iteration_count as f32) * 100.0
         );
     }
 }
@@ -1022,6 +931,33 @@ pub fn main() {
                 )
                 .unwrap();
             }
+
+            SubCommand::AnalyzeMatchups(analyze_matchups) => {
+                state = State::deserialize(analyze_matchups.state.as_str());
+                // Initialize cache and visualizer
+                let cache = initialize_team_matchup_cache(&state);
+                let mut visualizer = MatchupVisualizer::new(cache);
+
+                // Analyze all matchups with detailed reasoning
+                visualizer.analyze_all_matchups(&state);
+
+                // Print the matchup matrix
+                visualizer.print_matchup_matrix(&state);
+
+                // Generate HTML visualization
+                match visualizer.generate_html_visualization(&state) {
+                    Ok(_) => println!(
+                        "HTML visualization has been generated in the 'matchup_analysis' directory"
+                    ),
+                    Err(e) => println!("Failed to generate HTML visualization: {}", e),
+                };
+
+                println!(
+                    "\nCommand: 'matchup-detail <s1_idx> <s2_idx>' for specific matchup details"
+                );
+                println!("Example: 'matchup-detail 0 2' to see details of first Pokémon vs third opponent Pokémon");
+            }
+
             SubCommand::GenerateObservation(args) => {
                 let state_string =
                     std::fs::read_to_string(&args.input_file).expect("Failed to read input file");
@@ -1084,22 +1020,95 @@ pub fn main() {
                 );
                 pprint_mcts_result(&state, result);
             }
-            SubCommand::MonteCarloTreeSearchAZ(mcts_az) => {
-                state = State::deserialize(mcts_az.state.as_str());
-                let device = Device::Cpu; // or Device::Cuda(0) for GPU
-                let model = match NeuralNet::new(&mcts_az.model_path, device) {
-                    Ok(model) => Arc::new(model),
-                    Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
+
+            SubCommand::MonteCarloTreeSearchMU(mcts_evo) => {
+                // if state is provided, use it
+                let mut state = if mcts_evo.state != "" {
+                    State::deserialize(mcts_evo.state.as_str())
+                } else {
+                    // if not, read from data files
+                    let data_dir = PathBuf::from("data");
+                    let random_teams = match fs::read_to_string(data_dir.join("random_teams.json"))
+                    {
+                        Ok(content) => content,
+                        Err(err) => {
+                            eprintln!("Failed to read file: {}", err);
+                            return;
+                        }
+                    };
+                    let pokedex = match fs::read_to_string(data_dir.join("pokedex.json")) {
+                        Ok(content) => content,
+                        Err(err) => {
+                            eprintln!("Failed to read file: {}", err);
+                            return;
+                        }
+                    };
+                    let movedex = match fs::read_to_string(data_dir.join("moves.json")) {
+                        Ok(content) => content,
+                        Err(err) => {
+                            eprintln!("Failed to read file: {}", err);
+                            return;
+                        }
+                    };
+                    initialize_battle_state(&random_teams, &pokedex, &movedex)
                 };
+                println!("{}", state.serialize());
+                let mut matchup_cache = initialize_team_matchup_cache(&state);
+
+                analyze_matchup_cache(&state, &mut matchup_cache);
+
                 (side_one_options, side_two_options) = io_get_all_options(&state);
-                let result = perform_mcts_az(
+
+                let result = perform_mcts_with_team_matchups(
                     &mut state,
                     side_one_options.clone(),
                     side_two_options.clone(),
-                    std::time::Duration::from_millis(mcts_az.time_to_search_ms),
-                    model.clone(),
+                    std::time::Duration::from_millis(mcts_evo.time_to_search_ms),
+                    &mut matchup_cache,
                 );
-                pprint_mcts_result_az(&state, result);
+                pprint_mcts_result(&state, result);
+                // Print cache statistics
+                let (hits, misses, total, hit_rate) = matchup_cache.get_stats();
+                println!("\nCache Statistics:");
+                println!("  Total queries: {}", total);
+                println!("  Cache hits: {} ({:.2}%)", hits, hit_rate);
+                println!("  Cache misses: {} ({:.2}%)", misses, 100.0 - hit_rate);
+                println!("  Cache size: {} entries", matchup_cache.cache_size());
+                let (
+                    complete,
+                    partial,
+                    fallbacks,
+                    total,
+                    complete_rate,
+                    partial_rate,
+                    fallback_rate,
+                ) = matchup_cache.get_evaluation_stats();
+
+                println!("\nEvaluation Statistics:");
+                println!("  Total evaluations: {}", total);
+                println!(
+                    "  Complete evaluations: {} ({:.2}%)",
+                    complete, complete_rate
+                );
+                println!("  Partial evaluations: {} ({:.2}%)", partial, partial_rate);
+                println!("  Fallbacks: {} ({:.2}%)", fallbacks, fallback_rate);
+                println!(
+                    "  Strategic value mean: {}",
+                    matchup_cache.team_strategic_value_mean
+                );
+                println!("  Base value mean: {}", matchup_cache.team_base_value_mean);
+            }
+
+            SubCommand::MonteCarloTreeSearchEvo(mcts_evo) => {
+                state = State::deserialize(mcts_evo.state.as_str());
+                (side_one_options, side_two_options) = io_get_all_options(&state);
+                let result = perform_mcts(
+                    &mut state,
+                    side_one_options.clone(),
+                    side_two_options.clone(),
+                    std::time::Duration::from_millis(mcts_evo.time_to_search_ms),
+                );
+                pprint_mcts_result(&state, result);
             }
 
             SubCommand::MonteCarloTreeSearchPruned(mcts_pruned) => {
@@ -1139,46 +1148,6 @@ pub fn main() {
                 pprint_mcts_result_pn(&state, result);
             }
 
-            SubCommand::MonteCarloTreeSearchVN(mcts_vn) => {
-                state = State::deserialize(mcts_vn.state.as_str());
-                let device = Device::Cpu; // or Device::Cuda(0) for GPU
-                let model = match ValueNetwork::new(&mcts_vn.model_path, device) {
-                    Ok(model) => Some(Arc::new(model)),
-                    Err(e) => panic!("Failed to load model: {}", e),
-                };
-                (side_one_options, side_two_options) = io_get_all_options(&state);
-                let result = perform_mcts_vn_batched(
-                    &mut state,
-                    side_one_options.clone(),
-                    side_two_options.clone(),
-                    std::time::Duration::from_millis(mcts_vn.time_to_search_ms),
-                    model.clone(),
-                );
-                pprint_mcts_result_vn(&state, result);
-            }
-            SubCommand::MonteCarloTreeSearchAZForced(mcts_az_forced) => {
-                state = State::deserialize(mcts_az_forced.state.as_str());
-                let device = Device::Cpu; // or Device::Cuda(0) for GPU
-                let model = match NeuralNet::new(&mcts_az_forced.model_path, device) {
-                    Ok(model) => Arc::new(model),
-                    Err(e) => panic!("Failed to load model: {}", e), // Or handle error appropriately
-                };
-                (side_one_options, side_two_options) = io_get_all_options(&state);
-                let az_params = Some(AZParams {
-                    dirichlet_alpha_base: mcts_az_forced.alpha,
-                    use_adaptive_alpha: true,
-                    dirichlet_weight: 0.25,
-                });
-                let result = perform_mcts_az_with_forced(
-                    &mut state,
-                    side_one_options.clone(),
-                    side_two_options.clone(),
-                    std::time::Duration::from_millis(mcts_az_forced.time_to_search_ms),
-                    model.clone(),
-                    az_params,
-                );
-                pprint_mcts_result_az(&state, result);
-            }
             SubCommand::CalculateDamage(calculate_damage) => {
                 state = State::deserialize(calculate_damage.state.as_str());
                 let mut s1_choice = MOVES

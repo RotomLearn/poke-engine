@@ -1,14 +1,14 @@
 use crate::evaluate::evaluate;
 use crate::generate_instructions::generate_instructions_from_move_pair;
 use crate::instruction::StateInstructions;
-use crate::state::{MoveChoice, State};
+use crate::state::{MoveChoice, PokemonIndex, State};
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use rand::thread_rng;
 use std::collections::HashMap;
 use std::time::Duration;
 
-fn sigmoid(x: f32) -> f32 {
+pub fn sigmoid(x: f32) -> f32 {
     // Tuned so that ~200 points is very close to 1.0
     1.0 / (1.0 + (-0.0125 * x).exp())
 }
@@ -32,7 +32,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn new(s1_options: Vec<MoveChoice>, s2_options: Vec<MoveChoice>) -> Node {
+    pub fn new(s1_options: Vec<MoveChoice>, s2_options: Vec<MoveChoice>) -> Node {
         let s1_options_vec = s1_options
             .iter()
             .map(|x| MoveNode {
@@ -63,7 +63,7 @@ impl Node {
         }
     }
 
-    fn get_max_depth(&self) -> usize {
+    pub fn get_max_depth(&self) -> usize {
         if self.children.is_empty() {
             return 0;
         }
@@ -321,7 +321,7 @@ pub fn perform_mcts(
 }
 
 // Import the evolved evaluator
-use crate::evolved_evaluate::evaluate as evolved_evaluate;
+use crate::evolved_evaluate::evolved_evaluate;
 
 // This is a copy of the original perform_mcts function but using evolved_evaluate
 pub fn perform_mcts_evolved(

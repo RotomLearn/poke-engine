@@ -2,51 +2,51 @@ use crate::abilities::Abilities;
 use crate::choices::MoveCategory;
 use crate::state::{Pokemon, PokemonStatus, PokemonVolatileStatus, State};
 
-const POKEMON_ALIVE: f32 = 35.4;
-const POKEMON_HP: f32 = 104.7;
-const USED_TERA: f32 = -83.3;
+const POKEMON_ALIVE: f32 = 30.0;
+const POKEMON_HP: f32 = 100.0;
+const USED_TERA: f32 = -75.0;
 
-const POKEMON_ATTACK_BOOST: f32 = 18.8;
-const POKEMON_DEFENSE_BOOST: f32 = 12.4;
-const POKEMON_SPECIAL_ATTACK_BOOST: f32 = 38.1;
-const POKEMON_SPECIAL_DEFENSE_BOOST: f32 = 13.9;
-const POKEMON_SPEED_BOOST: f32 = 48.8;
+const POKEMON_ATTACK_BOOST: f32 = 30.0;
+const POKEMON_DEFENSE_BOOST: f32 = 15.0;
+const POKEMON_SPECIAL_ATTACK_BOOST: f32 = 30.0;
+const POKEMON_SPECIAL_DEFENSE_BOOST: f32 = 15.0;
+const POKEMON_SPEED_BOOST: f32 = 30.0;
 
-const POKEMON_BOOST_MULTIPLIER_6: f32 = 3.7;
-const POKEMON_BOOST_MULTIPLIER_5: f32 = 3.2;
-const POKEMON_BOOST_MULTIPLIER_4: f32 = 2.9;
-const POKEMON_BOOST_MULTIPLIER_3: f32 = 2.1;
-const POKEMON_BOOST_MULTIPLIER_2: f32 = 1.5;
-const POKEMON_BOOST_MULTIPLIER_1: f32 = 0.7;
+const POKEMON_BOOST_MULTIPLIER_6: f32 = 3.3;
+const POKEMON_BOOST_MULTIPLIER_5: f32 = 3.15;
+const POKEMON_BOOST_MULTIPLIER_4: f32 = 3.0;
+const POKEMON_BOOST_MULTIPLIER_3: f32 = 2.5;
+const POKEMON_BOOST_MULTIPLIER_2: f32 = 2.0;
+const POKEMON_BOOST_MULTIPLIER_1: f32 = 1.0;
 const POKEMON_BOOST_MULTIPLIER_0: f32 = 0.0;
-const POKEMON_BOOST_MULTIPLIER_NEG_1: f32 = -1.3;
-const POKEMON_BOOST_MULTIPLIER_NEG_2: f32 = -1.9;
-const POKEMON_BOOST_MULTIPLIER_NEG_3: f32 = -2.1;
-const POKEMON_BOOST_MULTIPLIER_NEG_4: f32 = -2.4;
-const POKEMON_BOOST_MULTIPLIER_NEG_5: f32 = -3.0;
-const POKEMON_BOOST_MULTIPLIER_NEG_6: f32 = -3.7;
+const POKEMON_BOOST_MULTIPLIER_NEG_1: f32 = -1.0;
+const POKEMON_BOOST_MULTIPLIER_NEG_2: f32 = -2.0;
+const POKEMON_BOOST_MULTIPLIER_NEG_3: f32 = -2.5;
+const POKEMON_BOOST_MULTIPLIER_NEG_4: f32 = -3.0;
+const POKEMON_BOOST_MULTIPLIER_NEG_5: f32 = -3.15;
+const POKEMON_BOOST_MULTIPLIER_NEG_6: f32 = -3.3;
 
-const POKEMON_FROZEN: f32 = -28.3;
-const POKEMON_ASLEEP: f32 = -18.6;
-const POKEMON_PARALYZED: f32 = -12.6;
-const POKEMON_TOXIC: f32 = -37.1;
-const POKEMON_POISONED: f32 = -12.2;
-const POKEMON_BURNED: f32 = -22.9;
+const POKEMON_FROZEN: f32 = -40.0;
+const POKEMON_ASLEEP: f32 = -25.0;
+const POKEMON_PARALYZED: f32 = -25.0;
+const POKEMON_TOXIC: f32 = -30.0;
+const POKEMON_POISONED: f32 = -10.0;
+const POKEMON_BURNED: f32 = -25.0;
 
-const LEECH_SEED: f32 = -22.2;
-const SUBSTITUTE: f32 = 57.9;
-const CONFUSION: f32 = -29.0;
+const LEECH_SEED: f32 = -30.0;
+const SUBSTITUTE: f32 = 40.0;
+const CONFUSION: f32 = -20.0;
 
-const REFLECT: f32 = 25.1;
-const LIGHT_SCREEN: f32 = 19.8;
-const STICKY_WEB: f32 = -12.8;
-const AURORA_VEIL: f32 = 37.4;
-const SAFE_GUARD: f32 = 3.9;
-const TAILWIND: f32 = 12.0;
+const REFLECT: f32 = 20.0;
+const LIGHT_SCREEN: f32 = 20.0;
+const STICKY_WEB: f32 = -25.0;
+const AURORA_VEIL: f32 = 40.0;
+const SAFE_GUARD: f32 = 5.0;
+const TAILWIND: f32 = 7.0;
 
-const STEALTH_ROCK: f32 = -17.0;
-const SPIKES: f32 = -7.7;
-const TOXIC_SPIKES: f32 = -13.3;
+const STEALTH_ROCK: f32 = -10.0;
+const SPIKES: f32 = -7.0;
+const TOXIC_SPIKES: f32 = -7.0;
 
 fn evaluate_burned(pokemon: &Pokemon) -> f32 {
     // burn is not as punishing in certain situations
@@ -111,7 +111,7 @@ fn evaluate_pokemon(pokemon: &Pokemon) -> f32 {
     score
 }
 
-pub fn evaluate(state: &State) -> f32 {
+pub fn evolved_evaluate(state: &State) -> f32 {
     let mut score = 0.0;
     let mut side_one_alive_count: f32 = 0.0;
     let mut side_two_alive_count: f32 = 0.0;
@@ -203,5 +203,5 @@ pub fn evaluate(state: &State) -> f32 {
     score -=
         state.side_two.side_conditions.toxic_spikes as f32 * TOXIC_SPIKES * side_two_alive_count;
 
-    score
+    score / 1000.
 }

@@ -1308,7 +1308,11 @@ fn generate_instructions_from_damage(
     hit_sub
 }
 
-fn move_has_no_effect(state: &State, choice: &Choice, attacking_side_ref: &SideReference) -> bool {
+pub fn move_has_no_effect(
+    state: &State,
+    choice: &Choice,
+    attacking_side_ref: &SideReference,
+) -> bool {
     let (_attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     let defender = defending_side.get_active_immutable();
 
@@ -1343,7 +1347,7 @@ fn move_has_no_effect(state: &State, choice: &Choice, attacking_side_ref: &SideR
     false
 }
 
-fn cannot_use_move(state: &State, choice: &Choice, attacking_side_ref: &SideReference) -> bool {
+pub fn cannot_use_move(state: &State, choice: &Choice, attacking_side_ref: &SideReference) -> bool {
     let (attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
 
     // If the opponent has 0 hp, you can't use a non-status move
@@ -2280,7 +2284,7 @@ fn modify_choice_priority(state: &State, side_reference: &SideReference, choice:
     }
 }
 
-fn moves_first(
+pub fn moves_first(
     state: &State,
     side_one_choice: &Choice,
     side_two_choice: &Choice,
