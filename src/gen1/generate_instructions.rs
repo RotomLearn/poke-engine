@@ -1,30 +1,24 @@
-use crate::choice_effects::choice_after_damage_hit;
-use crate::choice_effects::{
-    charge_choice_to_volatile, choice_before_move, choice_special_effect, modify_choice,
+use super::choice_effects::{
+    charge_choice_to_volatile, choice_after_damage_hit, choice_before_move, choice_special_effect,
+    modify_choice,
 };
+use super::damage_calc::{calculate_damage, DamageRolls};
+use super::state::{MoveChoice, PokemonVolatileStatus};
 use crate::choices::{
-    Boost, Choices, Effect, Heal, MoveTarget, MultiHitMove, Secondary, Status, VolatileStatus,
+    Boost, Choice, Choices, Effect, Heal, MoveCategory, MoveTarget, MultiHitMove, Secondary,
+    Status, VolatileStatus,
 };
 use crate::instruction::{
-    ApplyVolatileStatusInstruction, BoostInstruction, ChangeSideConditionInstruction,
-    DecrementRestTurnsInstruction, HealInstruction, RemoveVolatileStatusInstruction,
-    SetSleepTurnsInstruction,
-};
-use crate::instruction::{
-    DecrementPPInstruction, SetDamageDealtSideOneInstruction, SetDamageDealtSideTwoInstruction,
+    ApplyVolatileStatusInstruction, BoostInstruction, ChangeDamageDealtDamageInstruction,
+    ChangeDamageDealtMoveCategoryInstruction, ChangeSideConditionInstruction,
+    ChangeStatusInstruction, DamageInstruction, DecrementPPInstruction,
+    DecrementRestTurnsInstruction, HealInstruction, Instruction, RemoveVolatileStatusInstruction,
+    SetSleepTurnsInstruction, StateInstructions, SwitchInstruction,
+    ToggleDamageDealtHitSubstituteInstruction,
 };
 use crate::state::{
-    MoveChoice, PokemonBoostableStat, PokemonIndex, PokemonSideCondition, PokemonType, Side,
-    SideMovesFirst,
-};
-use crate::{
-    choices::{Choice, MoveCategory},
-    damage_calc::{calculate_damage, DamageRolls},
-    instruction::{
-        ChangeStatusInstruction, DamageInstruction, Instruction, StateInstructions,
-        SwitchInstruction,
-    },
-    state::{PokemonStatus, PokemonVolatileStatus, SideReference, State},
+    PokemonBoostableStat, PokemonIndex, PokemonSideCondition, PokemonStatus, PokemonType, Side,
+    SideMovesFirst, SideReference, State,
 };
 use std::cmp;
 
@@ -43,36 +37,38 @@ fn reset_damage_dealt(
     side_reference: &SideReference,
     incoming_instructions: &mut StateInstructions,
 ) {
-    if side.damage_dealt.damage != 0
-        || side.damage_dealt.move_category != MoveCategory::Physical
-        || side.damage_dealt.hit_substitute
-    {
-        match side_reference {
-            SideReference::SideOne => {
-                incoming_instructions
-                    .instruction_list
-                    .push(Instruction::SetDamageDealtSideOne(
-                        SetDamageDealtSideOneInstruction {
-                            damage_change: -1 * side.damage_dealt.damage,
-                            move_category: MoveCategory::Physical,
-                            previous_move_category: side.damage_dealt.move_category,
-                            toggle_hit_substitute: side.damage_dealt.hit_substitute,
-                        },
-                    ));
-            }
-            SideReference::SideTwo => {
-                incoming_instructions
-                    .instruction_list
-                    .push(Instruction::SetDamageDealtSideTwo(
-                        SetDamageDealtSideTwoInstruction {
-                            damage_change: -1 * side.damage_dealt.damage,
-                            move_category: MoveCategory::Physical,
-                            previous_move_category: side.damage_dealt.move_category,
-                            toggle_hit_substitute: side.damage_dealt.hit_substitute,
-                        },
-                    ));
-            }
-        }
+    // This creates instructions but does not modify the side
+    // because this function is called before the state applies the instructions
+
+    if side.damage_dealt.damage != 0 {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtDamage(
+                ChangeDamageDealtDamageInstruction {
+                    side_ref: *side_reference,
+                    damage_change: 0 - side.damage_dealt.damage,
+                },
+            ));
+    }
+    if side.damage_dealt.move_category != MoveCategory::Physical {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtMoveCatagory(
+                ChangeDamageDealtMoveCategoryInstruction {
+                    side_ref: *side_reference,
+                    move_category: MoveCategory::Physical,
+                    previous_move_category: side.damage_dealt.move_category,
+                },
+            ));
+    }
+    if side.damage_dealt.hit_substitute {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleDamageDealtHitSubstitute(
+                ToggleDamageDealtHitSubstituteInstruction {
+                    side_ref: *side_reference,
+                },
+            ));
     }
 }
 
@@ -84,37 +80,41 @@ fn set_damage_dealt(
     hit_substitute: bool,
     incoming_instructions: &mut StateInstructions,
 ) {
-    match attacking_side_ref {
-        SideReference::SideOne => {
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::SetDamageDealtSideOne(
-                    SetDamageDealtSideOneInstruction {
-                        damage_change: damage_dealt - attacking_side.damage_dealt.damage,
-                        move_category: choice.category,
-                        previous_move_category: attacking_side.damage_dealt.move_category,
-                        toggle_hit_substitute: attacking_side.damage_dealt.hit_substitute
-                            != hit_substitute,
-                    },
-                ));
-        }
-        SideReference::SideTwo => {
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::SetDamageDealtSideTwo(
-                    SetDamageDealtSideTwoInstruction {
-                        damage_change: damage_dealt - attacking_side.damage_dealt.damage,
-                        move_category: choice.category,
-                        previous_move_category: attacking_side.damage_dealt.move_category,
-                        toggle_hit_substitute: attacking_side.damage_dealt.hit_substitute
-                            != hit_substitute,
-                    },
-                ));
-        }
+    if attacking_side.damage_dealt.damage != damage_dealt {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtDamage(
+                ChangeDamageDealtDamageInstruction {
+                    side_ref: *attacking_side_ref,
+                    damage_change: damage_dealt - attacking_side.damage_dealt.damage,
+                },
+            ));
+        attacking_side.damage_dealt.damage = damage_dealt;
     }
-    attacking_side.damage_dealt.damage = damage_dealt;
-    attacking_side.damage_dealt.move_category = choice.category;
-    attacking_side.damage_dealt.hit_substitute = hit_substitute;
+
+    if attacking_side.damage_dealt.move_category != choice.category {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtMoveCatagory(
+                ChangeDamageDealtMoveCategoryInstruction {
+                    side_ref: *attacking_side_ref,
+                    move_category: choice.category,
+                    previous_move_category: attacking_side.damage_dealt.move_category,
+                },
+            ));
+        attacking_side.damage_dealt.move_category = choice.category;
+    }
+
+    if attacking_side.damage_dealt.hit_substitute != hit_substitute {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleDamageDealtHitSubstitute(
+                ToggleDamageDealtHitSubstituteInstruction {
+                    side_ref: *attacking_side_ref,
+                },
+            ));
+        attacking_side.damage_dealt.hit_substitute = hit_substitute;
+    }
 }
 
 pub fn generate_instructions_from_switch(
@@ -476,7 +476,7 @@ fn get_instructions_from_secondaries(
     incoming_instructions: StateInstructions,
     hit_sub: bool,
 ) -> Vec<StateInstructions> {
-    let mut return_instruction_list = Vec::with_capacity(16);
+    let mut return_instruction_list = Vec::with_capacity(4);
     return_instruction_list.push(incoming_instructions);
 
     for secondary in secondaries {
@@ -1630,7 +1630,6 @@ pub fn generate_instructions_from_move_pair(
         MoveChoice::None => {
             side_one_choice = Choice::default();
         }
-        MoveChoice::MoveTera(_) => panic!("Tera not available"),
     }
 
     let mut side_two_choice;
@@ -1647,10 +1646,9 @@ pub fn generate_instructions_from_move_pair(
         MoveChoice::None => {
             side_two_choice = Choice::default();
         }
-        MoveChoice::MoveTera(_) => panic!("Tera not available"),
     }
 
-    let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(16);
+    let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(4);
     let mut incoming_instructions: StateInstructions = StateInstructions::default();
 
     match moves_first(&state, &side_one_choice, &side_two_choice) {
@@ -1708,7 +1706,7 @@ pub fn generate_instructions_from_move_pair(
             }
 
             // side_two moves first
-            let mut side_two_moves_first_si = Vec::with_capacity(16);
+            let mut side_two_moves_first_si = Vec::with_capacity(4);
             handle_both_moves(
                 state,
                 &mut side_two_choice,
@@ -1770,27 +1768,12 @@ pub fn calculate_damage_rolls(
         &mut incoming_instructions,
     );
 
-    let mut return_vec = Vec::with_capacity(16);
-    if let Some((damage, _crit_damage)) =
+    let mut return_vec = Vec::with_capacity(4);
+    if let Some((damage, crit_damage)) =
         calculate_damage(&state, attacking_side_ref, &choice, DamageRolls::Max)
     {
-        let damage = damage as f32;
-        return_vec.push((damage * 0.85) as i16);
-        return_vec.push((damage * 0.86) as i16);
-        return_vec.push((damage * 0.87) as i16);
-        return_vec.push((damage * 0.88) as i16);
-        return_vec.push((damage * 0.89) as i16);
-        return_vec.push((damage * 0.90) as i16);
-        return_vec.push((damage * 0.91) as i16);
-        return_vec.push((damage * 0.92) as i16);
-        return_vec.push((damage * 0.93) as i16);
-        return_vec.push((damage * 0.94) as i16);
-        return_vec.push((damage * 0.95) as i16);
-        return_vec.push((damage * 0.96) as i16);
-        return_vec.push((damage * 0.97) as i16);
-        return_vec.push((damage * 0.98) as i16);
-        return_vec.push((damage * 0.99) as i16);
-        return_vec.push(damage as i16);
+        return_vec.push(damage);
+        return_vec.push(crit_damage);
         Some(return_vec)
     } else {
         None

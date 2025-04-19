@@ -1,8 +1,9 @@
 use crate::define_enum_with_from_str;
-use crate::state::PokemonVolatileStatus;
-use crate::state::{PokemonBoostableStat, PokemonSideCondition};
-use crate::state::{PokemonIndex, PokemonStatus};
-use crate::state::{PokemonMoveIndex, PokemonType};
+use crate::engine::state::PokemonVolatileStatus;
+use crate::state::{
+    PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonSideCondition, PokemonStatus,
+    PokemonType,
+};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt;
@@ -14407,13 +14408,10 @@ lazy_static! {
                 target: MoveTarget::User,
                 move_type: PokemonType::NORMAL,
                 flags: Flags {
-                    pivot: true,
+                    pivot: false, // Shed Tail implemented in choice_special_effect()
                     ..Default::default()
                 },
-                volatile_status: Some(VolatileStatus {
-                    target: MoveTarget::User,
-                    volatile_status: PokemonVolatileStatus::SUBSTITUTE,
-                }),
+                volatile_status: None, // Shed Tail implemented in choice_special_effect()
                 ..Default::default()
             },
         );

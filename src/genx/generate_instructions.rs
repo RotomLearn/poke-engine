@@ -1,9 +1,9 @@
-use crate::abilities::{
+use super::abilities::{
     ability_after_damage_hit, ability_before_move, ability_end_of_turn,
     ability_modify_attack_against, ability_modify_attack_being_used, ability_on_switch_in,
     ability_on_switch_out, Abilities,
 };
-use crate::choice_effects::{
+use super::choice_effects::{
     charge_choice_to_volatile, choice_after_damage_hit, choice_before_move, choice_hazard_clear,
     choice_special_effect, modify_choice,
 };
@@ -11,35 +11,34 @@ use crate::choices::{
     Boost, Choices, Effect, Heal, MoveTarget, MultiHitMove, Secondary, SideCondition, StatBoosts,
     Status, VolatileStatus, MOVES,
 };
+use crate::instruction::DecrementFutureSightInstruction;
+use crate::instruction::ToggleTerastallizedInstruction;
 use crate::instruction::{
-    ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
+    ApplyVolatileStatusInstruction, BoostInstruction, ChangeDamageDealtDamageInstruction,
+    ChangeDamageDealtMoveCategoryInstruction, ChangeItemInstruction,
     ChangeSideConditionInstruction, ChangeTerrain, ChangeVolatileStatusDurationInstruction,
     ChangeWeather, DecrementRestTurnsInstruction, DecrementWishInstruction, HealInstruction,
     RemoveVolatileStatusInstruction, SetSecondMoveSwitchOutMoveInstruction,
-    SetSleepTurnsInstruction, ToggleBatonPassingInstruction, ToggleTrickRoomInstruction,
+    SetSleepTurnsInstruction, ToggleBatonPassingInstruction,
+    ToggleDamageDealtHitSubstituteInstruction, ToggleShedTailingInstruction,
+    ToggleTrickRoomInstruction,
 };
-use crate::instruction::{DecrementFutureSightInstruction, SetDamageDealtSideTwoInstruction};
 use crate::instruction::{DecrementPPInstruction, SetLastUsedMoveInstruction};
-use crate::instruction::{SetDamageDealtSideOneInstruction, ToggleTerastallizedInstruction};
-use crate::state::{PokemonMoveIndex, SideMovesFirst};
 
-use crate::damage_calc::calculate_futuresight_damage;
-use crate::items::{
+use super::damage_calc::calculate_futuresight_damage;
+use super::damage_calc::{calculate_damage, type_effectiveness_modifier, DamageRolls};
+use super::items::{
     item_before_move, item_end_of_turn, item_modify_attack_against, item_modify_attack_being_used,
     item_on_switch_in, Items,
 };
-use crate::state::{
-    LastUsedMove, MoveChoice, PokemonBoostableStat, PokemonIndex, PokemonSideCondition,
-    PokemonType, Side, Terrain,
+use super::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
+use crate::choices::{Choice, MoveCategory};
+use crate::instruction::{
+    ChangeStatusInstruction, DamageInstruction, Instruction, StateInstructions, SwitchInstruction,
 };
-use crate::{
-    choices::{Choice, MoveCategory},
-    damage_calc::{calculate_damage, type_effectiveness_modifier, DamageRolls},
-    instruction::{
-        ChangeStatusInstruction, DamageInstruction, Instruction, StateInstructions,
-        SwitchInstruction,
-    },
-    state::{PokemonStatus, PokemonVolatileStatus, SideReference, State, Weather},
+use crate::state::{
+    LastUsedMove, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonSideCondition,
+    PokemonStatus, PokemonType, Side, SideMovesFirst, SideReference, State,
 };
 use std::cmp;
 
@@ -191,6 +190,32 @@ fn generate_instructions_from_switch(
         }
     }
 
+    let mut shed_tailing = false;
+    if side.shed_tailing {
+        shed_tailing = true;
+        side.shed_tailing = false;
+        match switching_side_ref {
+            SideReference::SideOne => {
+                incoming_instructions
+                    .instruction_list
+                    .push(Instruction::ToggleShedTailing(
+                        ToggleShedTailingInstruction {
+                            side_ref: SideReference::SideOne,
+                        },
+                    ));
+            }
+            SideReference::SideTwo => {
+                incoming_instructions
+                    .instruction_list
+                    .push(Instruction::ToggleShedTailing(
+                        ToggleShedTailingInstruction {
+                            side_ref: SideReference::SideTwo,
+                        },
+                    ));
+            }
+        }
+    }
+
     #[cfg(feature = "gen5")]
     if side.get_active_immutable().status == PokemonStatus::SLEEP {
         let current_active_index = side.active_index;
@@ -245,6 +270,7 @@ fn generate_instructions_from_switch(
         &switching_side_ref,
         &mut incoming_instructions.instruction_list,
         baton_passing,
+        shed_tailing,
     );
     state.reset_toxic_count(
         &switching_side_ref,
@@ -278,6 +304,56 @@ fn generate_instructions_from_switch(
             switching_side_ref,
             incoming_instructions,
         );
+    }
+
+    if side.side_conditions.healing_wish > 0 {
+        #[cfg(any(feature = "gen8", feature = "gen9"))]
+        let mut healing_wish_consumed = false;
+
+        #[cfg(any(
+            feature = "gen3",
+            feature = "gen4",
+            feature = "gen5",
+            feature = "gen6",
+            feature = "gen7"
+        ))]
+        let mut healing_wish_consumed = true;
+
+        let switched_in_pkmn = side.get_active();
+        if switched_in_pkmn.hp < switched_in_pkmn.maxhp {
+            let heal_amount = switched_in_pkmn.maxhp - switched_in_pkmn.hp;
+            let heal_instruction = Instruction::Heal(HealInstruction {
+                side_ref: switching_side_ref,
+                heal_amount,
+            });
+            incoming_instructions
+                .instruction_list
+                .push(heal_instruction);
+            switched_in_pkmn.hp += heal_amount;
+            healing_wish_consumed = true;
+        }
+        if switched_in_pkmn.status != PokemonStatus::NONE {
+            add_remove_status_instructions(
+                incoming_instructions,
+                new_pokemon_index,
+                switching_side_ref,
+                side,
+            );
+            healing_wish_consumed = true;
+        }
+
+        if healing_wish_consumed {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeSideCondition(
+                    ChangeSideConditionInstruction {
+                        side_ref: switching_side_ref,
+                        side_condition: PokemonSideCondition::HealingWish,
+                        amount: -1 * side.side_conditions.healing_wish,
+                    },
+                ));
+            side.side_conditions.healing_wish = 0;
+        }
     }
 
     let active = side.get_active_immutable();
@@ -571,6 +647,20 @@ pub fn add_remove_status_instructions(
                 pkmn.sleep_turns = 0;
             }
         }
+        PokemonStatus::TOXIC => {
+            if side.side_conditions.toxic_count != 0 {
+                incoming_instructions
+                    .instruction_list
+                    .push(Instruction::ChangeSideCondition(
+                        ChangeSideConditionInstruction {
+                            side_ref: side_reference,
+                            side_condition: PokemonSideCondition::ToxicCount,
+                            amount: -1 * side.side_conditions.toxic_count,
+                        },
+                    ));
+                side.side_conditions.toxic_count = 0;
+            }
+        }
         _ => {}
     }
     pkmn.status = PokemonStatus::NONE;
@@ -801,7 +891,7 @@ fn get_instructions_from_secondaries(
     incoming_instructions: StateInstructions,
     hit_sub: bool,
 ) -> Vec<StateInstructions> {
-    let mut return_instruction_list = Vec::with_capacity(16);
+    let mut return_instruction_list = Vec::with_capacity(4);
     return_instruction_list.push(incoming_instructions);
 
     for secondary in secondaries {
@@ -1041,36 +1131,38 @@ fn reset_damage_dealt(
     side_reference: &SideReference,
     incoming_instructions: &mut StateInstructions,
 ) {
-    if side.damage_dealt.damage != 0
-        || side.damage_dealt.move_category != MoveCategory::Physical
-        || side.damage_dealt.hit_substitute
-    {
-        match side_reference {
-            SideReference::SideOne => {
-                incoming_instructions
-                    .instruction_list
-                    .push(Instruction::SetDamageDealtSideOne(
-                        SetDamageDealtSideOneInstruction {
-                            damage_change: -1 * side.damage_dealt.damage,
-                            move_category: MoveCategory::Physical,
-                            previous_move_category: side.damage_dealt.move_category,
-                            toggle_hit_substitute: side.damage_dealt.hit_substitute,
-                        },
-                    ));
-            }
-            SideReference::SideTwo => {
-                incoming_instructions
-                    .instruction_list
-                    .push(Instruction::SetDamageDealtSideTwo(
-                        SetDamageDealtSideTwoInstruction {
-                            damage_change: -1 * side.damage_dealt.damage,
-                            move_category: MoveCategory::Physical,
-                            previous_move_category: side.damage_dealt.move_category,
-                            toggle_hit_substitute: side.damage_dealt.hit_substitute,
-                        },
-                    ));
-            }
-        }
+    // This creates instructions but does not modify the side
+    // because this function is called before the state applies the instructions
+
+    if side.damage_dealt.damage != 0 {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtDamage(
+                ChangeDamageDealtDamageInstruction {
+                    side_ref: *side_reference,
+                    damage_change: 0 - side.damage_dealt.damage,
+                },
+            ));
+    }
+    if side.damage_dealt.move_category != MoveCategory::Physical {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtMoveCatagory(
+                ChangeDamageDealtMoveCategoryInstruction {
+                    side_ref: *side_reference,
+                    move_category: MoveCategory::Physical,
+                    previous_move_category: side.damage_dealt.move_category,
+                },
+            ));
+    }
+    if side.damage_dealt.hit_substitute {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleDamageDealtHitSubstitute(
+                ToggleDamageDealtHitSubstituteInstruction {
+                    side_ref: *side_reference,
+                },
+            ));
     }
 }
 
@@ -1082,37 +1174,41 @@ fn set_damage_dealt(
     hit_substitute: bool,
     incoming_instructions: &mut StateInstructions,
 ) {
-    match attacking_side_ref {
-        SideReference::SideOne => {
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::SetDamageDealtSideOne(
-                    SetDamageDealtSideOneInstruction {
-                        damage_change: damage_dealt - attacking_side.damage_dealt.damage,
-                        move_category: choice.category,
-                        previous_move_category: attacking_side.damage_dealt.move_category,
-                        toggle_hit_substitute: attacking_side.damage_dealt.hit_substitute
-                            != hit_substitute,
-                    },
-                ));
-        }
-        SideReference::SideTwo => {
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::SetDamageDealtSideTwo(
-                    SetDamageDealtSideTwoInstruction {
-                        damage_change: damage_dealt - attacking_side.damage_dealt.damage,
-                        move_category: choice.category,
-                        previous_move_category: attacking_side.damage_dealt.move_category,
-                        toggle_hit_substitute: attacking_side.damage_dealt.hit_substitute
-                            != hit_substitute,
-                    },
-                ));
-        }
+    if attacking_side.damage_dealt.damage != damage_dealt {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtDamage(
+                ChangeDamageDealtDamageInstruction {
+                    side_ref: *attacking_side_ref,
+                    damage_change: damage_dealt - attacking_side.damage_dealt.damage,
+                },
+            ));
+        attacking_side.damage_dealt.damage = damage_dealt;
     }
-    attacking_side.damage_dealt.damage = damage_dealt;
-    attacking_side.damage_dealt.move_category = choice.category;
-    attacking_side.damage_dealt.hit_substitute = hit_substitute;
+
+    if attacking_side.damage_dealt.move_category != choice.category {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ChangeDamageDealtMoveCatagory(
+                ChangeDamageDealtMoveCategoryInstruction {
+                    side_ref: *attacking_side_ref,
+                    move_category: choice.category,
+                    previous_move_category: attacking_side.damage_dealt.move_category,
+                },
+            ));
+        attacking_side.damage_dealt.move_category = choice.category;
+    }
+
+    if attacking_side.damage_dealt.hit_substitute != hit_substitute {
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleDamageDealtHitSubstitute(
+                ToggleDamageDealtHitSubstituteInstruction {
+                    side_ref: *attacking_side_ref,
+                },
+            ));
+        attacking_side.damage_dealt.hit_substitute = hit_substitute;
+    }
 }
 
 fn generate_instructions_from_damage(
@@ -2022,7 +2118,7 @@ pub fn generate_instructions_from_move(
         final_instructions.push(incoming_instructions);
         return;
     }
-    choice_special_effect(state, &choice, &attacking_side, &mut incoming_instructions);
+    choice_special_effect(state, choice, &attacking_side, &mut incoming_instructions);
     let damage = calculate_damage(state, &attacking_side, &choice, DamageRolls::Max);
     check_move_hit_or_miss(
         state,
@@ -2373,6 +2469,148 @@ pub fn moves_first(
     }
 }
 
+fn get_active_protosynthesis(side: &Side) -> Option<PokemonVolatileStatus> {
+    if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PROTOSYNTHESISATK)
+    {
+        Some(PokemonVolatileStatus::PROTOSYNTHESISATK)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PROTOSYNTHESISDEF)
+    {
+        Some(PokemonVolatileStatus::PROTOSYNTHESISDEF)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PROTOSYNTHESISSPA)
+    {
+        Some(PokemonVolatileStatus::PROTOSYNTHESISSPA)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PROTOSYNTHESISSPD)
+    {
+        Some(PokemonVolatileStatus::PROTOSYNTHESISSPD)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::PROTOSYNTHESISSPE)
+    {
+        Some(PokemonVolatileStatus::PROTOSYNTHESISSPE)
+    } else {
+        None
+    }
+}
+
+fn get_active_quarkdrive(side: &Side) -> Option<PokemonVolatileStatus> {
+    if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::QUARKDRIVEATK)
+    {
+        Some(PokemonVolatileStatus::QUARKDRIVEATK)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::QUARKDRIVEDEF)
+    {
+        Some(PokemonVolatileStatus::QUARKDRIVEDEF)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::QUARKDRIVESPA)
+    {
+        Some(PokemonVolatileStatus::QUARKDRIVESPA)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::QUARKDRIVESPD)
+    {
+        Some(PokemonVolatileStatus::QUARKDRIVESPD)
+    } else if side
+        .volatile_statuses
+        .contains(&PokemonVolatileStatus::QUARKDRIVESPE)
+    {
+        Some(PokemonVolatileStatus::QUARKDRIVESPE)
+    } else {
+        None
+    }
+}
+
+fn on_weather_end(
+    state: &mut State,
+    sides: [&SideReference; 2],
+    incoming_instructions: &mut StateInstructions,
+) {
+    match state.weather.weather_type {
+        Weather::SUN => {
+            for side_ref in sides {
+                let side = state.get_side(side_ref);
+                if side.get_active_immutable().ability == Abilities::PROTOSYNTHESIS {
+                    if let Some(volatile_status) = get_active_protosynthesis(side) {
+                        let active = side.get_active();
+                        if active.item == Items::BOOSTERENERGY {
+                            incoming_instructions
+                                .instruction_list
+                                .push(Instruction::ChangeItem(ChangeItemInstruction {
+                                    side_ref: *side_ref,
+                                    current_item: Items::BOOSTERENERGY,
+                                    new_item: Items::NONE,
+                                }));
+                            active.item = Items::NONE;
+                        } else {
+                            incoming_instructions.instruction_list.push(
+                                Instruction::RemoveVolatileStatus(
+                                    RemoveVolatileStatusInstruction {
+                                        side_ref: *side_ref,
+                                        volatile_status,
+                                    },
+                                ),
+                            );
+                            side.volatile_statuses.remove(&volatile_status);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn on_terrain_end(
+    state: &mut State,
+    sides: [&SideReference; 2],
+    incoming_instructions: &mut StateInstructions,
+) {
+    match state.terrain.terrain_type {
+        Terrain::ELECTRICTERRAIN => {
+            for side_ref in sides {
+                let side = state.get_side(side_ref);
+                if side.get_active_immutable().ability == Abilities::QUARKDRIVE {
+                    if let Some(volatile_status) = get_active_quarkdrive(side) {
+                        let active = side.get_active();
+                        if active.item == Items::BOOSTERENERGY {
+                            incoming_instructions
+                                .instruction_list
+                                .push(Instruction::ChangeItem(ChangeItemInstruction {
+                                    side_ref: *side_ref,
+                                    current_item: Items::BOOSTERENERGY,
+                                    new_item: Items::NONE,
+                                }));
+                            active.item = Items::NONE;
+                        } else {
+                            incoming_instructions.instruction_list.push(
+                                Instruction::RemoveVolatileStatus(
+                                    RemoveVolatileStatusInstruction {
+                                        side_ref: *side_ref,
+                                        volatile_status,
+                                    },
+                                ),
+                            );
+                            side.volatile_statuses.remove(&volatile_status);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn add_end_of_turn_instructions(
     state: &mut State,
     mut incoming_instructions: &mut StateInstructions,
@@ -2394,6 +2632,7 @@ fn add_end_of_turn_instructions(
             .push(weather_dissipate_instruction);
         state.weather.turns_remaining -= 1;
         if state.weather.turns_remaining == 0 {
+            on_weather_end(state, sides, &mut incoming_instructions);
             let weather_end_instruction = Instruction::ChangeWeather(ChangeWeather {
                 new_weather: Weather::NONE,
                 new_weather_turns_remaining: 0,
@@ -2433,6 +2672,7 @@ fn add_end_of_turn_instructions(
             .push(terrain_dissipate_instruction);
         state.terrain.turns_remaining -= 1;
         if state.terrain.turns_remaining == 0 {
+            on_terrain_end(state, sides, &mut incoming_instructions);
             let terrain_end_instruction = Instruction::ChangeTerrain(ChangeTerrain {
                 new_terrain: Terrain::NONE,
                 new_terrain_turns_remaining: 0,
@@ -2615,9 +2855,10 @@ fn add_end_of_turn_instructions(
 
     // status damage
     for side_ref in sides {
-        let side = state.get_side(side_ref);
+        let (side, other_side) = state.get_both_sides(side_ref);
         let toxic_count = side.side_conditions.toxic_count as f32;
         let active_pkmn = side.get_active();
+        let other_side_active = other_side.get_active();
         if active_pkmn.hp == 0 || active_pkmn.ability == Abilities::MAGICGUARD {
             continue;
         }
@@ -2664,30 +2905,37 @@ fn add_end_of_turn_instructions(
                     .instruction_list
                     .push(poison_damage_instruction);
             }
-            PokemonStatus::TOXIC if active_pkmn.ability != Abilities::POISONHEAL => {
-                let toxic_multiplier = (1.0 / 16.0) * toxic_count + (1.0 / 16.0);
-                let damage_amount = cmp::max(
-                    cmp::min(
-                        (active_pkmn.maxhp as f32 * toxic_multiplier) as i16,
-                        active_pkmn.hp,
-                    ),
-                    1,
-                );
-                let toxic_damage_instruction = Instruction::Damage(DamageInstruction {
-                    side_ref: *side_ref,
-                    damage_amount,
-                });
+            PokemonStatus::TOXIC => {
+                if active_pkmn.ability != Abilities::POISONHEAL
+                    || other_side_active.ability == Abilities::NEUTRALIZINGGAS
+                {
+                    let toxic_multiplier = (1.0 / 16.0) * toxic_count + (1.0 / 16.0);
+                    let damage_amount = cmp::max(
+                        cmp::min(
+                            (active_pkmn.maxhp as f32 * toxic_multiplier) as i16,
+                            active_pkmn.hp,
+                        ),
+                        1,
+                    );
+                    let toxic_damage_instruction = Instruction::Damage(DamageInstruction {
+                        side_ref: *side_ref,
+                        damage_amount,
+                    });
+
+                    active_pkmn.hp -= damage_amount;
+                    incoming_instructions
+                        .instruction_list
+                        .push(toxic_damage_instruction);
+                }
+
+                // toxic counter is always incremented, even if the pokemon has poison heal
                 let toxic_counter_increment_instruction =
                     Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
                         side_ref: *side_ref,
                         side_condition: PokemonSideCondition::ToxicCount,
                         amount: 1,
                     });
-                active_pkmn.hp -= damage_amount;
                 side.side_conditions.toxic_count += 1;
-                incoming_instructions
-                    .instruction_list
-                    .push(toxic_damage_instruction);
                 incoming_instructions
                     .instruction_list
                     .push(toxic_counter_increment_instruction);
@@ -2756,6 +3004,34 @@ fn add_end_of_turn_instructions(
 
         if side
             .volatile_statuses
+            .contains(&PokemonVolatileStatus::SLOWSTART)
+        {
+            incoming_instructions
+                .instruction_list
+                .push(Instruction::ChangeVolatileStatusDuration(
+                    ChangeVolatileStatusDurationInstruction {
+                        side_ref: *side_ref,
+                        volatile_status: PokemonVolatileStatus::SLOWSTART,
+                        amount: -1,
+                    },
+                ));
+            side.volatile_status_durations.slowstart -= 1;
+            if side.volatile_status_durations.slowstart == 0 {
+                incoming_instructions
+                    .instruction_list
+                    .push(Instruction::RemoveVolatileStatus(
+                        RemoveVolatileStatusInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: PokemonVolatileStatus::SLOWSTART,
+                        },
+                    ));
+                side.volatile_statuses
+                    .remove(&PokemonVolatileStatus::SLOWSTART);
+            }
+        }
+
+        if side
+            .volatile_statuses
             .contains(&PokemonVolatileStatus::LOCKEDMOVE)
         {
             // the number says 2 but this is 3 turns of using a locking move
@@ -2813,56 +3089,60 @@ fn add_end_of_turn_instructions(
 
         if side
             .volatile_statuses
-            .contains(&PokemonVolatileStatus::YAWNSLEEPTHISTURN)
-        {
-            side.volatile_statuses
-                .remove(&PokemonVolatileStatus::YAWNSLEEPTHISTURN);
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::RemoveVolatileStatus(
-                    RemoveVolatileStatusInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::YAWNSLEEPTHISTURN,
-                    },
-                ));
-
-            let active = side.get_active();
-            if active.status == PokemonStatus::NONE {
-                active.status = PokemonStatus::SLEEP;
-                incoming_instructions
-                    .instruction_list
-                    .push(Instruction::ChangeStatus(ChangeStatusInstruction {
-                        side_ref: *side_ref,
-                        pokemon_index: side.active_index,
-                        old_status: PokemonStatus::NONE,
-                        new_status: PokemonStatus::SLEEP,
-                    }));
-            }
-        }
-
-        if side
-            .volatile_statuses
             .contains(&PokemonVolatileStatus::YAWN)
         {
-            side.volatile_statuses.remove(&PokemonVolatileStatus::YAWN);
-            side.volatile_statuses
-                .insert(PokemonVolatileStatus::YAWNSLEEPTHISTURN);
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::RemoveVolatileStatus(
-                    RemoveVolatileStatusInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::YAWN,
-                    },
-                ));
-            incoming_instructions
-                .instruction_list
-                .push(Instruction::ApplyVolatileStatus(
-                    ApplyVolatileStatusInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::YAWNSLEEPTHISTURN,
-                    },
-                ));
+            match side.volatile_status_durations.yawn {
+                0 => {
+                    incoming_instructions.instruction_list.push(
+                        Instruction::ChangeVolatileStatusDuration(
+                            ChangeVolatileStatusDurationInstruction {
+                                side_ref: *side_ref,
+                                volatile_status: PokemonVolatileStatus::YAWN,
+                                amount: 1,
+                            },
+                        ),
+                    );
+                    side.volatile_status_durations.yawn += 1;
+                }
+                1 => {
+                    side.volatile_statuses.remove(&PokemonVolatileStatus::YAWN);
+                    incoming_instructions
+                        .instruction_list
+                        .push(Instruction::RemoveVolatileStatus(
+                            RemoveVolatileStatusInstruction {
+                                side_ref: *side_ref,
+                                volatile_status: PokemonVolatileStatus::YAWN,
+                            },
+                        ));
+                    incoming_instructions.instruction_list.push(
+                        Instruction::ChangeVolatileStatusDuration(
+                            ChangeVolatileStatusDurationInstruction {
+                                side_ref: *side_ref,
+                                volatile_status: PokemonVolatileStatus::YAWN,
+                                amount: -1,
+                            },
+                        ),
+                    );
+                    side.volatile_status_durations.yawn -= 1;
+
+                    let active = side.get_active();
+                    if active.status == PokemonStatus::NONE {
+                        active.status = PokemonStatus::SLEEP;
+                        incoming_instructions
+                            .instruction_list
+                            .push(Instruction::ChangeStatus(ChangeStatusInstruction {
+                                side_ref: *side_ref,
+                                pokemon_index: side.active_index,
+                                old_status: PokemonStatus::NONE,
+                                new_status: PokemonStatus::SLEEP,
+                            }));
+                    }
+                }
+                _ => panic!(
+                    "Yawn duration cannot be {} when yawn volatile is active",
+                    side.volatile_status_durations.yawn
+                ),
+            }
         }
 
         if side
@@ -3175,6 +3455,15 @@ fn run_move(
                                     side_ref: SideReference::SideOne,
                                 },
                             ));
+                    } else if choice.move_id == Choices::SHEDTAIL {
+                        state.side_one.shed_tailing = !state.side_one.shed_tailing;
+                        instructions
+                            .instruction_list
+                            .push(Instruction::ToggleShedTailing(
+                                ToggleShedTailingInstruction {
+                                    side_ref: SideReference::SideOne,
+                                },
+                            ));
                     }
                     state.side_one.force_switch = !state.side_one.force_switch;
                     instructions
@@ -3216,6 +3505,15 @@ fn run_move(
                             .instruction_list
                             .push(Instruction::ToggleBatonPassing(
                                 ToggleBatonPassingInstruction {
+                                    side_ref: SideReference::SideTwo,
+                                },
+                            ));
+                    } else if choice.move_id == Choices::SHEDTAIL {
+                        state.side_two.shed_tailing = !state.side_two.shed_tailing;
+                        instructions
+                            .instruction_list
+                            .push(Instruction::ToggleShedTailing(
+                                ToggleShedTailingInstruction {
                                     side_ref: SideReference::SideTwo,
                                 },
                             ));
@@ -3359,7 +3657,7 @@ pub fn generate_instructions_from_move_pair(
         }
     }
 
-    let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(16);
+    let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(4);
     let mut incoming_instructions: StateInstructions = StateInstructions::default();
 
     // Run terstallization type changes
@@ -3446,7 +3744,7 @@ pub fn generate_instructions_from_move_pair(
             }
 
             // side_two moves first
-            let mut side_two_moves_first_si = Vec::with_capacity(16);
+            let mut side_two_moves_first_si = Vec::with_capacity(4);
             handle_both_moves(
                 state,
                 &mut side_two_choice,
@@ -3554,27 +3852,12 @@ pub fn calculate_damage_rolls(
         choice = MOVES.get(&Choices::FUTURESIGHT)?.clone();
     }
 
-    let mut return_vec = Vec::with_capacity(16);
-    if let Some((damage, _crit_damage)) =
+    let mut return_vec = Vec::with_capacity(4);
+    if let Some((damage, crit_damage)) =
         calculate_damage(&state, attacking_side_ref, &choice, DamageRolls::Max)
     {
-        let damage = damage as f32;
-        return_vec.push((damage * 0.85) as i16);
-        return_vec.push((damage * 0.86) as i16);
-        return_vec.push((damage * 0.87) as i16);
-        return_vec.push((damage * 0.88) as i16);
-        return_vec.push((damage * 0.89) as i16);
-        return_vec.push((damage * 0.90) as i16);
-        return_vec.push((damage * 0.91) as i16);
-        return_vec.push((damage * 0.92) as i16);
-        return_vec.push((damage * 0.93) as i16);
-        return_vec.push((damage * 0.94) as i16);
-        return_vec.push((damage * 0.95) as i16);
-        return_vec.push((damage * 0.96) as i16);
-        return_vec.push((damage * 0.97) as i16);
-        return_vec.push((damage * 0.98) as i16);
-        return_vec.push((damage * 0.99) as i16);
-        return_vec.push(damage as i16);
+        return_vec.push(damage);
+        return_vec.push(crit_damage);
         Some(return_vec)
     } else {
         None
@@ -3613,8 +3896,9 @@ pub fn calculate_both_damage_rolls(
 
 #[cfg(test)]
 mod tests {
+    use super::super::abilities::Abilities;
+    use super::super::state::{PokemonVolatileStatus, Terrain, Weather};
     use super::*;
-    use crate::abilities::Abilities;
     use crate::choices::{Choices, MOVES};
     use crate::instruction::{
         ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
@@ -3622,7 +3906,8 @@ mod tests {
         DamageInstruction, EnableMoveInstruction, SwitchInstruction,
     };
     use crate::state::{
-        Move, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, SideReference, State, Terrain,
+        Move, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonSideCondition,
+        PokemonStatus, SideReference, State,
     };
 
     #[test]
@@ -4156,6 +4441,31 @@ mod tests {
         let mut state: State = State::default();
         state.side_one.get_active().hp = 25;
         let mut choice = MOVES.get(&Choices::SUBSTITUTE).unwrap().to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
+    fn test_shedtail_failing_if_user_has_less_than_50_percent_hp() {
+        let mut state: State = State::default();
+        state.side_one.get_active().hp = 50;
+        let mut choice = MOVES.get(&Choices::SHEDTAIL).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(
@@ -9196,6 +9506,38 @@ mod tests {
     }
 
     #[test]
+    fn test_poisonheal_while_toxiced_still_increases_toxic_count() {
+        let mut state = State::default();
+        state.side_one.get_active().ability = Abilities::POISONHEAL;
+        state.side_one.get_active().status = PokemonStatus::TOXIC;
+        state.side_one.get_active().hp = 50;
+
+        let mut incoming_instructions = StateInstructions::default();
+        add_end_of_turn_instructions(
+            &mut state,
+            &mut incoming_instructions,
+            &SideReference::SideOne,
+        );
+
+        let expected_instructions = StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![
+                Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+                    side_ref: SideReference::SideOne,
+                    side_condition: PokemonSideCondition::ToxicCount,
+                    amount: 1,
+                }),
+                Instruction::Heal(HealInstruction {
+                    side_ref: SideReference::SideOne,
+                    heal_amount: 12,
+                }),
+            ],
+        };
+
+        assert_eq!(expected_instructions, incoming_instructions)
+    }
+
+    #[test]
     fn test_poisonheal_does_not_overheal() {
         let mut state = State::default();
         state.side_one.get_active().ability = Abilities::POISONHEAL;
@@ -9221,7 +9563,7 @@ mod tests {
     }
 
     #[test]
-    fn test_poisonheal_does_nothign_at_maxhp() {
+    fn test_poisonheal_does_nothing_at_maxhp() {
         let mut state = State::default();
         state.side_one.get_active().ability = Abilities::POISONHEAL;
         state.side_one.get_active().status = PokemonStatus::POISON;

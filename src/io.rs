@@ -1,12 +1,11 @@
 #![allow(non_snake_case)]
 use crate::choices;
 use crate::choices::{Choice, Choices, MoveCategory, MOVES};
-use crate::embedding;
-use crate::evaluate::evaluate;
-use crate::generate_instructions::{
+use crate::engine::evaluate::evaluate;
+use crate::engine::generate_instructions::{
     calculate_both_damage_rolls, generate_instructions_from_move_pair,
 };
-use crate::inspect_state::generate_observation_output;
+use crate::engine::state::MoveChoice;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::matchup_mcts::initialize_team_matchup_cache;
 use crate::matchup_mcts::{analyze_matchup_cache, perform_mcts_with_team_matchups};
@@ -609,84 +608,23 @@ fn pprint_expectiminimax_result(
     print!("{: <12}", " ");
 
     for s2_move in s2_options.iter() {
-        match s2_move {
-            MoveChoice::MoveTera(m) => {
-                let s2_move_str =
-                    format!("{}-tera", state.side_two.get_active_immutable().moves[m].id);
-                print!("{: >12}", s2_move_str.to_lowercase());
-            }
-            MoveChoice::Move(m) => {
-                let s2_move_str = format!("{}", state.side_two.get_active_immutable().moves[m].id);
-                print!("{: >12}", s2_move_str.to_lowercase());
-            }
-            MoveChoice::Switch(s) => {
-                let s2_move_str = format!(
-                    "{}",
-                    state.side_two.pokemon[*s].id.to_string().to_lowercase()
-                );
-                print!("{: >12}", s2_move_str);
-            }
-            MoveChoice::None => {}
-        }
+        print!("{: >12}", s2_move.to_string(&state.side_two));
     }
     print!("\n");
 
     for i in 0..s1_len {
         let s1_move_str = s1_options[i];
-        match s1_move_str {
-            MoveChoice::MoveTera(m) => {
-                let move_id = format!(
-                    "{}-tera",
-                    state.side_one.get_active_immutable().moves[&m].id
-                );
-                print!("{:<12}", move_id.to_string().to_lowercase());
-            }
-            MoveChoice::Move(m) => {
-                let move_id = state.side_one.get_active_immutable().moves[&m].id;
-                print!("{:<12}", move_id.to_string().to_lowercase());
-            }
-            MoveChoice::Switch(s) => {
-                let pkmn_id = &state.side_one.pokemon[s].id;
-                print!("{:<12}", pkmn_id.to_string().to_lowercase());
-            }
-            MoveChoice::None => {}
-        }
+        print!("{:<12}", s1_move_str.to_string(&state.side_one));
         for j in 0..s2_len {
             let index = i * s2_len + j;
             print!("{number:>11.2} ", number = result[index]);
         }
         print!("\n");
     }
-    match s1_options[safest_choice.0] {
-        MoveChoice::MoveTera(m) => {
-            let move_id = format!(
-                "{}-tera",
-                state.side_one.get_active_immutable().moves[&m].id
-            );
-            print!(
-                "\nSafest Choice: {}, {}\n",
-                move_id.to_string().to_lowercase(),
-                safest_choice.1
-            );
-        }
-        MoveChoice::Move(m) => {
-            let move_id = state.side_one.get_active_immutable().moves[&m].id;
-            print!(
-                "\nSafest Choice: {}, {}\n",
-                move_id.to_string().to_lowercase(),
-                safest_choice.1
-            );
-        }
-        MoveChoice::Switch(s) => {
-            let pkmn_id = &state.side_one.pokemon[s].id;
-            print!(
-                "\nSafest Choice: Switch {}, {}\n",
-                pkmn_id.to_string().to_lowercase(),
-                safest_choice.1
-            );
-        }
-        MoveChoice::None => println!("No Move"),
-    }
+    print!(
+        "{:<12}",
+        s1_options[safest_choice.0].to_string(&state.side_one)
+    );
 }
 
 fn pprint_mcts_result(state: &State, result: MctsResult) {
@@ -700,7 +638,7 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
     for x in result.s1.iter() {
         println!(
             "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
-            get_move_id_from_movechoice(&state.side_one, &x.move_choice),
+            x.move_choice.to_string(&state.side_one),
             x.total_score,
             x.total_score / x.visits as f32,
             x.visits,
@@ -716,7 +654,7 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
     for x in result.s2.iter() {
         println!(
             "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
-            get_move_id_from_movechoice(&state.side_two, &x.move_choice),
+            x.move_choice.to_string(&state.side_two),
             x.total_score,
             x.total_score / x.visits as f32,
             x.visits,
@@ -808,19 +746,6 @@ fn pprint_state_instruction_vector(instructions: &Vec<StateInstructions>) {
     }
 }
 
-fn get_move_id_from_movechoice(side: &Side, move_choice: &MoveChoice) -> String {
-    match move_choice {
-        MoveChoice::MoveTera(index) => {
-            format!("{}-tera", side.get_active_immutable().moves[&index].id).to_lowercase()
-        }
-        MoveChoice::Move(index) => {
-            format!("{}", side.get_active_immutable().moves[&index].id).to_lowercase()
-        }
-        MoveChoice::Switch(index) => format!("switch {}", side.pokemon[*index].id).to_lowercase(),
-        MoveChoice::None => "No Move".to_string(),
-    }
-}
-
 fn print_subcommand_result(
     result: &Vec<f32>,
     side_one_options: &Vec<MoveChoice>,
@@ -832,14 +757,14 @@ fn print_subcommand_result(
 
     let joined_side_one_options = side_one_options
         .iter()
-        .map(|x| format!("{}", get_move_id_from_movechoice(&state.side_one, x)))
+        .map(|x| format!("{}", x.to_string(&state.side_one)))
         .collect::<Vec<String>>()
         .join(",");
     println!("side one options: {}", joined_side_one_options);
 
     let joined_side_two_options = side_two_options
         .iter()
-        .map(|x| format!("{}", get_move_id_from_movechoice(&state.side_two, x)))
+        .map(|x| format!("{}", x.to_string(&state.side_two)))
         .collect::<Vec<String>>()
         .join(",");
     println!("side two options: {}", joined_side_two_options);
@@ -850,29 +775,7 @@ fn print_subcommand_result(
         .collect::<Vec<String>>()
         .join(",");
     println!("matrix: {}", joined);
-    match move_choice {
-        MoveChoice::MoveTera(_) => {
-            println!(
-                "choice: {}-tera",
-                get_move_id_from_movechoice(&state.side_one, &move_choice)
-            );
-        }
-        MoveChoice::Move(_) => {
-            println!(
-                "choice: {}",
-                get_move_id_from_movechoice(&state.side_one, &move_choice)
-            );
-        }
-        MoveChoice::Switch(_) => {
-            println!(
-                "choice: switch {}",
-                get_move_id_from_movechoice(&state.side_one, &move_choice)
-            );
-        }
-        MoveChoice::None => {
-            println!("no move");
-        }
-    }
+    println!("choice: {}", move_choice.to_string(&state.side_one));
     println!("evaluation: {}", safest.1);
 }
 
@@ -987,7 +890,7 @@ pub fn main() {
             }
             SubCommand::Expectiminimax(expectiminimax) => {
                 state = State::deserialize(expectiminimax.state.as_str());
-                (side_one_options, side_two_options) = io_get_all_options(&state);
+                (side_one_options, side_two_options) = state.root_get_all_options();
                 result = expectiminimax_search(
                     &mut state,
                     expectiminimax.depth,
@@ -1000,7 +903,7 @@ pub fn main() {
             }
             SubCommand::IterativeDeepening(iterative_deepending) => {
                 state = State::deserialize(iterative_deepending.state.as_str());
-                (side_one_options, side_two_options) = io_get_all_options(&state);
+                (side_one_options, side_two_options) = state.root_get_all_options();
                 (side_one_options, side_two_options, result, _) = iterative_deepen_expectiminimax(
                     &mut state,
                     side_one_options.clone(),
@@ -1011,7 +914,7 @@ pub fn main() {
             }
             SubCommand::MonteCarloTreeSearch(mcts) => {
                 state = State::deserialize(mcts.state.as_str());
-                (side_one_options, side_two_options) = io_get_all_options(&state);
+                (side_one_options, side_two_options) = state.root_get_all_options();
                 let result = perform_mcts(
                     &mut state,
                     side_one_options.clone(),
@@ -1170,10 +1073,10 @@ pub fn main() {
             SubCommand::GenerateInstructions(generate_instructions) => {
                 state = State::deserialize(generate_instructions.state.as_str());
                 let (s1_movechoice, s2_movechoice);
-                match state
-                    .side_one
-                    .string_to_movechoice(generate_instructions.side_one_move.as_str())
-                {
+                match MoveChoice::from_string(
+                    generate_instructions.side_one_move.as_str(),
+                    &state.side_one,
+                ) {
                     None => {
                         println!(
                             "Invalid move choice for side one: {}",
@@ -1183,10 +1086,10 @@ pub fn main() {
                     }
                     Some(v) => s1_movechoice = v,
                 }
-                match state
-                    .side_two
-                    .string_to_movechoice(generate_instructions.side_two_move.as_str())
-                {
+                match MoveChoice::from_string(
+                    generate_instructions.side_two_move.as_str(),
+                    &state.side_two,
+                ) {
                     None => {
                         println!(
                             "Invalid move choice for side two: {}",
@@ -1273,38 +1176,12 @@ fn command_loop(mut io_data: IOData) {
                 println!("{}", io_data.state.serialize());
             }
             "matchup" | "m" => {
-                let (side_one_options, side_two_options) = io_get_all_options(&io_data.state);
-
-                let mut side_one_choices = vec![];
-                for option in side_one_options {
-                    side_one_choices.push(
-                        format!("{:?}", io_data.state.side_one.option_to_string(&option))
-                            .to_lowercase(),
-                    );
-                }
-                let mut side_two_choices = vec![];
-                for option in side_two_options {
-                    side_two_choices.push(
-                        format!("{:?}", io_data.state.side_two.option_to_string(&option))
-                            .to_lowercase(),
-                    );
-                }
-                println!(
-                    "SideOne {}\n\nvs\n\nSideTwo {}\n\nState:\n  Weather: {:?},{}\n  Terrain: {:?},{}\n  TrickRoom: {},{}",
-                    io_data.state.side_one.io_print(side_one_choices),
-                    io_data.state.side_two.io_print(side_two_choices),
-                    io_data.state.weather.weather_type,
-                    io_data.state.weather.turns_remaining,
-                    io_data.state.terrain.terrain_type,
-                    io_data.state.terrain.turns_remaining,
-                    io_data.state.trick_room.active,
-                    io_data.state.trick_room.turns_remaining
-                );
+                println!("{}", io_data.state.pprint());
             }
             "generate-instructions" | "g" => {
                 let (s1_move, s2_move);
                 match args.next() {
-                    Some(s) => match io_data.state.side_one.string_to_movechoice(s) {
+                    Some(s) => match MoveChoice::from_string(s, &io_data.state.side_one) {
                         Some(m) => {
                             s1_move = m;
                         }
@@ -1319,7 +1196,7 @@ fn command_loop(mut io_data: IOData) {
                     }
                 }
                 match args.next() {
-                    Some(s) => match io_data.state.side_two.string_to_movechoice(s) {
+                    Some(s) => match MoveChoice::from_string(s, &io_data.state.side_two) {
                         Some(m) => {
                             s2_move = m;
                         }
@@ -1395,7 +1272,7 @@ fn command_loop(mut io_data: IOData) {
             "iterative-deepening" | "id" => match args.next() {
                 Some(s) => {
                     let max_time_ms = s.parse::<u64>().unwrap();
-                    let (side_one_options, side_two_options) = io_get_all_options(&io_data.state);
+                    let (side_one_options, side_two_options) = io_data.state.root_get_all_options();
 
                     let start_time = std::time::Instant::now();
                     let (s1_moves, s2_moves, result, depth_searched) =
@@ -1427,7 +1304,7 @@ fn command_loop(mut io_data: IOData) {
             "monte-carlo-tree-search" | "mcts" => match args.next() {
                 Some(s) => {
                     let max_time_ms = s.parse::<u64>().unwrap();
-                    let (side_one_options, side_two_options) = io_get_all_options(&io_data.state);
+                    let (side_one_options, side_two_options) = io_data.state.root_get_all_options();
 
                     let start_time = std::time::Instant::now();
                     let result = perform_mcts(
@@ -1486,7 +1363,7 @@ fn command_loop(mut io_data: IOData) {
                         None => {}
                     }
                     let depth = s.parse::<i8>().unwrap();
-                    let (side_one_options, side_two_options) = io_get_all_options(&io_data.state);
+                    let (side_one_options, side_two_options) = io_data.state.root_get_all_options();
                     let start_time = std::time::Instant::now();
                     let result = expectiminimax_search(
                         &mut io_data.state,

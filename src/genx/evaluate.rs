@@ -1,6 +1,8 @@
-use crate::abilities::Abilities;
+use super::abilities::Abilities;
+use super::items::Items;
+use super::state::PokemonVolatileStatus;
 use crate::choices::MoveCategory;
-use crate::state::{Pokemon, PokemonStatus, PokemonVolatileStatus, State};
+use crate::state::{Pokemon, PokemonStatus, Side, State};
 
 const POKEMON_ALIVE: f32 = 30.0;
 const POKEMON_HP: f32 = 100.0;
@@ -39,14 +41,27 @@ const CONFUSION: f32 = -20.0;
 
 const REFLECT: f32 = 20.0;
 const LIGHT_SCREEN: f32 = 20.0;
-const STICKY_WEB: f32 = -25.0;
 const AURORA_VEIL: f32 = 40.0;
 const SAFE_GUARD: f32 = 5.0;
 const TAILWIND: f32 = 7.0;
+const HEALING_WISH: f32 = 30.0;
 
 const STEALTH_ROCK: f32 = -10.0;
 const SPIKES: f32 = -7.0;
 const TOXIC_SPIKES: f32 = -7.0;
+const STICKY_WEB: f32 = -25.0;
+
+fn evaluate_poison(pokemon: &Pokemon, base_score: f32) -> f32 {
+    match pokemon.ability {
+        Abilities::POISONHEAL => 15.0,
+        Abilities::GUTS
+        | Abilities::MARVELSCALE
+        | Abilities::QUICKFEET
+        | Abilities::TOXICBOOST
+        | Abilities::MAGICGUARD => 10.0,
+        _ => base_score,
+    }
+}
 
 fn evaluate_burned(pokemon: &Pokemon) -> f32 {
     // burn is not as punishing in certain situations
@@ -93,9 +108,27 @@ fn get_boost_multiplier(boost: i8) -> f32 {
     }
 }
 
+fn evaluate_hazards(pokemon: &Pokemon, side: &Side) -> f32 {
+    let mut score = 0.0;
+    let pkmn_is_grounded = pokemon.is_grounded();
+    if pokemon.item != Items::HEAVYDUTYBOOTS {
+        if pokemon.ability != Abilities::MAGICGUARD {
+            score += side.side_conditions.stealth_rock as f32 * STEALTH_ROCK;
+            if pkmn_is_grounded {
+                score += side.side_conditions.spikes as f32 * SPIKES;
+                score += side.side_conditions.toxic_spikes as f32 * TOXIC_SPIKES;
+            }
+        }
+        if pkmn_is_grounded {
+            score += side.side_conditions.sticky_web as f32 * STICKY_WEB;
+        }
+    }
+
+    score
+}
+
 fn evaluate_pokemon(pokemon: &Pokemon) -> f32 {
     let mut score = 0.0;
-    score += POKEMON_ALIVE;
     score += POKEMON_HP * pokemon.hp as f32 / pokemon.maxhp as f32;
 
     match pokemon.status {
@@ -103,25 +136,53 @@ fn evaluate_pokemon(pokemon: &Pokemon) -> f32 {
         PokemonStatus::FREEZE => score += POKEMON_FROZEN,
         PokemonStatus::SLEEP => score += POKEMON_ASLEEP,
         PokemonStatus::PARALYZE => score += POKEMON_PARALYZED,
-        PokemonStatus::TOXIC => score += POKEMON_TOXIC,
-        PokemonStatus::POISON => score += POKEMON_POISONED,
+        PokemonStatus::TOXIC => score += evaluate_poison(pokemon, POKEMON_TOXIC),
+        PokemonStatus::POISON => score += evaluate_poison(pokemon, POKEMON_POISONED),
         PokemonStatus::NONE => {}
     }
+
+    if pokemon.item != Items::NONE {
+        score += 10.0;
+    }
+
+    // without this a low hp pokemon could get a negative score and incentivize the other side
+    // to keep it alive
+    if score < 0.0 {
+        score = 0.0;
+    }
+
+    score += POKEMON_ALIVE;
 
     score
 }
 
 pub fn evaluate(state: &State) -> f32 {
     let mut score = 0.0;
-    let mut side_one_alive_count: f32 = 0.0;
-    let mut side_two_alive_count: f32 = 0.0;
 
-    let iter = state.side_one.pokemon.into_iter();
+    let mut iter = state.side_one.pokemon.into_iter();
     let mut s1_used_tera = false;
-    for pkmn in iter {
+    while let Some(pkmn) = iter.next() {
         if pkmn.hp > 0 {
-            side_one_alive_count += 1.0;
             score += evaluate_pokemon(pkmn);
+            score += evaluate_hazards(pkmn, &state.side_one);
+            if iter.pokemon_index == state.side_one.active_index {
+                for vs in state.side_one.volatile_statuses.iter() {
+                    match vs {
+                        PokemonVolatileStatus::LEECHSEED => score += LEECH_SEED,
+                        PokemonVolatileStatus::SUBSTITUTE => score += SUBSTITUTE,
+                        PokemonVolatileStatus::CONFUSION => score += CONFUSION,
+                        _ => {}
+                    }
+                }
+
+                score += get_boost_multiplier(state.side_one.attack_boost) * POKEMON_ATTACK_BOOST;
+                score += get_boost_multiplier(state.side_one.defense_boost) * POKEMON_DEFENSE_BOOST;
+                score += get_boost_multiplier(state.side_one.special_attack_boost)
+                    * POKEMON_SPECIAL_ATTACK_BOOST;
+                score += get_boost_multiplier(state.side_one.special_defense_boost)
+                    * POKEMON_SPECIAL_DEFENSE_BOOST;
+                score += get_boost_multiplier(state.side_one.speed_boost) * POKEMON_SPEED_BOOST;
+            }
         }
         if pkmn.terastallized {
             s1_used_tera = true;
@@ -130,15 +191,31 @@ pub fn evaluate(state: &State) -> f32 {
     if s1_used_tera {
         score += USED_TERA;
     }
-    let iter = state.side_two.pokemon.into_iter();
+    let mut iter = state.side_two.pokemon.into_iter();
     let mut s2_used_tera = false;
-    for pkmn in iter {
+    while let Some(pkmn) = iter.next() {
         if pkmn.hp > 0 {
-            side_two_alive_count += 1.0;
             score -= evaluate_pokemon(pkmn);
-        } else if pkmn.level == 1 {
-            // level == 1 represents an un-revealed pokemon
-            side_two_alive_count += 1.0;
+            score -= evaluate_hazards(pkmn, &state.side_two);
+
+            if iter.pokemon_index == state.side_two.active_index {
+                for vs in state.side_two.volatile_statuses.iter() {
+                    match vs {
+                        PokemonVolatileStatus::LEECHSEED => score -= LEECH_SEED,
+                        PokemonVolatileStatus::SUBSTITUTE => score -= SUBSTITUTE,
+                        PokemonVolatileStatus::CONFUSION => score -= CONFUSION,
+                        _ => {}
+                    }
+                }
+
+                score -= get_boost_multiplier(state.side_two.attack_boost) * POKEMON_ATTACK_BOOST;
+                score -= get_boost_multiplier(state.side_two.defense_boost) * POKEMON_DEFENSE_BOOST;
+                score -= get_boost_multiplier(state.side_two.special_attack_boost)
+                    * POKEMON_SPECIAL_ATTACK_BOOST;
+                score -= get_boost_multiplier(state.side_two.special_defense_boost)
+                    * POKEMON_SPECIAL_DEFENSE_BOOST;
+                score -= get_boost_multiplier(state.side_two.speed_boost) * POKEMON_SPEED_BOOST;
+            }
         }
         if pkmn.terastallized {
             s2_used_tera = true;
@@ -148,60 +225,19 @@ pub fn evaluate(state: &State) -> f32 {
         score -= USED_TERA;
     }
 
-    for vs in state.side_one.volatile_statuses.iter() {
-        match vs {
-            PokemonVolatileStatus::LEECHSEED => score += LEECH_SEED,
-            PokemonVolatileStatus::SUBSTITUTE => score += SUBSTITUTE,
-            PokemonVolatileStatus::CONFUSION => score += CONFUSION,
-            _ => {}
-        }
-    }
-    for vs in state.side_two.volatile_statuses.iter() {
-        match vs {
-            PokemonVolatileStatus::LEECHSEED => score -= LEECH_SEED,
-            PokemonVolatileStatus::SUBSTITUTE => score -= SUBSTITUTE,
-            PokemonVolatileStatus::CONFUSION => score -= CONFUSION,
-            _ => {}
-        }
-    }
-
-    score += get_boost_multiplier(state.side_one.attack_boost) * POKEMON_ATTACK_BOOST;
-    score += get_boost_multiplier(state.side_one.defense_boost) * POKEMON_DEFENSE_BOOST;
-    score +=
-        get_boost_multiplier(state.side_one.special_attack_boost) * POKEMON_SPECIAL_ATTACK_BOOST;
-    score +=
-        get_boost_multiplier(state.side_one.special_defense_boost) * POKEMON_SPECIAL_DEFENSE_BOOST;
-    score += get_boost_multiplier(state.side_one.speed_boost) * POKEMON_SPEED_BOOST;
     score += state.side_one.side_conditions.reflect as f32 * REFLECT;
     score += state.side_one.side_conditions.light_screen as f32 * LIGHT_SCREEN;
-    score += state.side_one.side_conditions.sticky_web as f32 * STICKY_WEB;
     score += state.side_one.side_conditions.aurora_veil as f32 * AURORA_VEIL;
     score += state.side_one.side_conditions.safeguard as f32 * SAFE_GUARD;
     score += state.side_one.side_conditions.tailwind as f32 * TAILWIND;
-    score +=
-        state.side_one.side_conditions.stealth_rock as f32 * STEALTH_ROCK * side_one_alive_count;
-    score += state.side_one.side_conditions.spikes as f32 * SPIKES * side_one_alive_count;
-    score +=
-        state.side_one.side_conditions.toxic_spikes as f32 * TOXIC_SPIKES * side_one_alive_count;
+    score += state.side_one.side_conditions.healing_wish as f32 * HEALING_WISH;
 
-    score -= get_boost_multiplier(state.side_two.attack_boost) * POKEMON_ATTACK_BOOST;
-    score -= get_boost_multiplier(state.side_two.defense_boost) * POKEMON_DEFENSE_BOOST;
-    score -=
-        get_boost_multiplier(state.side_two.special_attack_boost) * POKEMON_SPECIAL_ATTACK_BOOST;
-    score -=
-        get_boost_multiplier(state.side_two.special_defense_boost) * POKEMON_SPECIAL_DEFENSE_BOOST;
-    score -= get_boost_multiplier(state.side_two.speed_boost) * POKEMON_SPEED_BOOST;
     score -= state.side_two.side_conditions.reflect as f32 * REFLECT;
     score -= state.side_two.side_conditions.light_screen as f32 * LIGHT_SCREEN;
-    score -= state.side_two.side_conditions.sticky_web as f32 * STICKY_WEB;
     score -= state.side_two.side_conditions.aurora_veil as f32 * AURORA_VEIL;
     score -= state.side_two.side_conditions.safeguard as f32 * SAFE_GUARD;
     score -= state.side_two.side_conditions.tailwind as f32 * TAILWIND;
-    score -=
-        state.side_two.side_conditions.stealth_rock as f32 * STEALTH_ROCK * side_two_alive_count;
-    score -= state.side_two.side_conditions.spikes as f32 * SPIKES * side_two_alive_count;
-    score -=
-        state.side_two.side_conditions.toxic_spikes as f32 * TOXIC_SPIKES * side_two_alive_count;
+    score -= state.side_two.side_conditions.healing_wish as f32 * HEALING_WISH;
 
     score
 }

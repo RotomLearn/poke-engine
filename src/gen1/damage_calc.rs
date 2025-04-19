@@ -1,10 +1,7 @@
-use crate::state::Side;
-use crate::{
-    choices::{Choice, MoveCategory},
-    state::{
-        Pokemon, PokemonBoostableStat, PokemonStatus, PokemonType, PokemonVolatileStatus,
-        SideReference, State,
-    },
+use super::state::PokemonVolatileStatus;
+use crate::choices::{Choice, MoveCategory};
+use crate::state::{
+    Pokemon, PokemonBoostableStat, PokemonStatus, PokemonType, Side, SideReference, State,
 };
 
 #[rustfmt::skip]

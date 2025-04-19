@@ -1,5 +1,98 @@
 # Changelog
 
+## [v0.0.41](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.41) - 2025-04-11
+
+### Bug Fixes
+
+- Gen1 and gen2 also return crit damages - ([18e2370](https://github.com/pmariglia/poke-engine/commit/18e23706ae2706488e89d73ba84313ff4a187cc6))
+
+- Add some more information to text debugger - ([12d72d3](https://github.com/pmariglia/poke-engine/commit/12d72d3a3accb6994acd9e065e123dea04178f82))
+
+## [v0.0.40](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.40) - 2025-04-06
+
+### Features
+
+- Healing Wish - ([5fd1014](https://github.com/pmariglia/poke-engine/commit/5fd101422df8df6153777b162fe2166e3217c6a6))
+
+- [**breaking**] SlowStart - ([1194b15](https://github.com/pmariglia/poke-engine/commit/1194b157523e7b2c7278e20bbb4508b6d819ebbe))
+
+## [v0.0.39](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.39) - 2025-04-05
+
+### Features
+
+- Poison and toxic are conditional in evaluation fn - ([ca7dd56](https://github.com/pmariglia/poke-engine/commit/ca7dd567321ece048bbc814ed0a7c2b2198fd185))
+
+
+### Bug Fixes
+
+- Protosynthesis and Quarkdrive dissipate when weather/field ends - ([9e95564](https://github.com/pmariglia/poke-engine/commit/9e95564b4c60bdf40a885368b84f225d5d5f1a85))
+
+- Undo paralysis evaluation being based on speed - ([1b0a889](https://github.com/pmariglia/poke-engine/commit/1b0a889c3233cfe19231749628964295498cf2c3))
+
+
+### Refactor
+
+- [**breaking**] Yawn uses VolatileStatusDurations - ([fc79e9f](https://github.com/pmariglia/poke-engine/commit/fc79e9f862905cc66077a46f9739b96c0d7284a0))
+
+## [v0.0.38](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.38) - 2025-04-01
+
+### Features
+
+- Evaluation Fn additions (gen3+). - ([c044fef](https://github.com/pmariglia/poke-engine/commit/c044fef3857ecb561550fb211e4e6817ca2fe2cb))
+
+- Powertrip - ([d89aa45](https://github.com/pmariglia/poke-engine/commit/d89aa45ebfa714cb4fd9c62506c036e2ae543940))
+
+
+### Bug Fixes
+
+- Charge moves are forced when charging - ([56b8725](https://github.com/pmariglia/poke-engine/commit/56b872580467900ed7b5c94e41daa05b7d36545a))
+
+
+### Refactor
+
+- Damage calc returns crit damage as well - ([1f7fa6d](https://github.com/pmariglia/poke-engine/commit/1f7fa6dcaad3faaa5e1fb50cd30baf853219c37c))
+
+## [v0.0.37](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.37) - 2025-03-30
+
+### Features
+
+- Solarblade does not charge in sun - ([10f6dc3](https://github.com/pmariglia/poke-engine/commit/10f6dc371f8e5261d7b94b94c816fcf87063963a))
+
+
+### Bug Fixes
+
+- Toxic count is removed when toxic is removed - ([283ec60](https://github.com/pmariglia/poke-engine/commit/283ec60d12b097ce302e11123f2b7584de8178c3))
+
+## [v0.0.36](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.36) - 2025-03-20
+
+### Bug Fixes
+
+- Terastallized defender always takes 2x from stellar move - ([877b1fc](https://github.com/pmariglia/poke-engine/commit/877b1fc8e8d8807c836fa6fa456a2f07b883f871))
+
+- Terablast stellar reduces offensive stats - ([a59857f](https://github.com/pmariglia/poke-engine/commit/a59857fe8264304ede821b430d2345ad255a7313))
+
+- Decouple terastallization from gen9 - ([ae35600](https://github.com/pmariglia/poke-engine/commit/ae356001fea6af328b9fee379f66a80ce88af27f))
+
+## [v0.0.35](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.35) - 2025-03-11
+
+### Features
+
+- Encore durations tracking - ([e24af0a](https://github.com/pmariglia/poke-engine/commit/e24af0a6006cb787c11d3c2d1b5e28b12947954e))
+
+
+### Bug Fixes
+
+- Dont evaluate volatiles/boosts if active is dead. put base_ability in gen1/gen2 - ([56475d5](https://github.com/pmariglia/poke-engine/commit/56475d5b417a8643a1f505a131daee3179dd23cd))
+
+- Abilities that cancel opponent actions only work if move targets the opponent - ([62cba0d](https://github.com/pmariglia/poke-engine/commit/62cba0d9670bde24139e9be0fb9abdccf1da5acc))
+
+- Airballoon only pops when hit by non-status move targetting the holder - ([97753d3](https://github.com/pmariglia/poke-engine/commit/97753d3d11cc9e4064b59f3a818abdf5a11abb15))
+
+
+### Miscellaneous Tasks
+
+- Remove unrevealed pkmn logic - ([ba5a3d5](https://github.com/pmariglia/poke-engine/commit/ba5a3d5a78d19870f7126d717a4284eb26d878c8))
+
 ## [v0.0.34](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.34) - 2025-03-08
 
 ### Features

@@ -1,12 +1,10 @@
-use crate::abilities::Abilities;
+use super::abilities::Abilities;
+use super::state::{PokemonVolatileStatus, Terrain, Weather};
+use crate::choices::{Choice, MoveCategory};
 use crate::choices::{Choices, MOVES};
-use crate::state::{PokemonIndex, Side, Terrain};
-use crate::{
-    choices::{Choice, MoveCategory},
-    state::{
-        Pokemon, PokemonBoostableStat, PokemonStatus, PokemonType, PokemonVolatileStatus,
-        SideReference, State, Weather,
-    },
+use crate::state::{
+    Pokemon, PokemonBoostableStat, PokemonIndex, PokemonStatus, PokemonType, Side, SideReference,
+    State,
 };
 
 #[rustfmt::skip]
@@ -526,7 +524,12 @@ fn common_pkmn_damage_calc(
     let defender_types = get_defending_types(&defending_side, defender, attacker, choice);
 
     let mut damage_modifier = 1.0;
-    damage_modifier *= _type_effectiveness_modifier(&choice.move_type, &defender_types);
+
+    if defender.terastallized && choice.move_type == PokemonType::STELLAR {
+        damage_modifier *= 2.0;
+    } else {
+        damage_modifier *= _type_effectiveness_modifier(&choice.move_type, &defender_types);
+    }
 
     if attacker.ability != Abilities::CLOUDNINE
         && attacker.ability != Abilities::AIRLOCK
@@ -662,10 +665,9 @@ mod tests {
     use std::collections::HashSet;
     use std::iter::FromIterator;
 
+    use super::super::state::{PokemonVolatileStatus, Weather};
     use super::*;
-    use crate::state::{
-        PokemonStatus, PokemonType, PokemonVolatileStatus, SideReference, State, Weather,
-    };
+    use crate::state::{PokemonStatus, PokemonType, SideReference, State};
 
     #[test]
     fn test_basic_damaging_move() {

@@ -1,14 +1,10 @@
-use crate::abilities::Abilities;
 use crate::choices::{Choices, MoveCategory};
-use crate::items::Items;
-use crate::pokemon::PokemonName;
-use crate::state::SideReference;
-use crate::state::Terrain;
-use crate::state::Weather;
-use crate::state::{LastUsedMove, PokemonVolatileStatus};
-use crate::state::{PokemonBoostableStat, PokemonType};
-use crate::state::{PokemonIndex, PokemonSideCondition};
-use crate::state::{PokemonMoveIndex, PokemonStatus};
+use crate::engine::items::Items;
+use crate::engine::state::{PokemonVolatileStatus, Terrain, Weather};
+use crate::state::{
+    LastUsedMove, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonSideCondition,
+    PokemonStatus, PokemonType, SideReference,
+};
 use std::fmt;
 use std::fmt::Formatter;
 
@@ -22,7 +18,7 @@ impl Default for StateInstructions {
     fn default() -> StateInstructions {
         StateInstructions {
             percentage: 100.0,
-            instruction_list: Vec::with_capacity(16),
+            instruction_list: Vec::with_capacity(4),
         }
     }
 }
@@ -82,9 +78,11 @@ pub enum Instruction {
     SetSideOneMoveSecondSwitchOutMove(SetSecondMoveSwitchOutMoveInstruction),
     SetSideTwoMoveSecondSwitchOutMove(SetSecondMoveSwitchOutMoveInstruction),
     ToggleBatonPassing(ToggleBatonPassingInstruction),
+    ToggleShedTailing(ToggleShedTailingInstruction),
     SetLastUsedMove(SetLastUsedMoveInstruction),
-    SetDamageDealtSideOne(SetDamageDealtSideOneInstruction),
-    SetDamageDealtSideTwo(SetDamageDealtSideTwoInstruction),
+    ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction),
+    ChangeDamageDealtMoveCatagory(ChangeDamageDealtMoveCategoryInstruction),
+    ToggleDamageDealtHitSubstitute(ToggleDamageDealtHitSubstituteInstruction),
     DecrementPP(DecrementPPInstruction),
     ToggleTrickRoom(ToggleTrickRoomInstruction),
     DecrementTrickRoomTurnsRemaining,
@@ -181,11 +179,7 @@ impl fmt::Debug for Instruction {
                 )
             }
             Instruction::ChangeAbility(c) => {
-                write!(
-                    f,
-                    "ChangeAbility {:?}: {:?} -> {:?}",
-                    c.side_ref, c.old_ability, c.new_ability
-                )
+                write!(f, "ChangeAbility {:?}: {:?}", c.side_ref, c.ability_change)
             }
             Instruction::ChangeItem(c) => {
                 write!(
@@ -258,16 +252,12 @@ impl fmt::Debug for Instruction {
             Instruction::ChangeSubstituteHealth(s) => {
                 write!(
                     f,
-                    "SetSubstituteHealth {:?}: {:?}",
+                    "ChangeSubstituteHealth {:?}: {:?}",
                     s.side_ref, s.health_change,
                 )
             }
             Instruction::FormeChange(s) => {
-                write!(
-                    f,
-                    "FormeChange {:?}: {:?} -> {:?}",
-                    s.side_ref, s.previous_forme, s.new_forme
-                )
+                write!(f, "FormeChange {:?} {}", s.side_ref, s.name_change)
             }
             Instruction::SetSideOneMoveSecondSwitchOutMove(s) => {
                 write!(
@@ -286,6 +276,9 @@ impl fmt::Debug for Instruction {
             Instruction::ToggleBatonPassing(s) => {
                 write!(f, "ToggleBatonPassing {:?}", s.side_ref)
             }
+            Instruction::ToggleShedTailing(s) => {
+                write!(f, "ToggleShedTailing {:?}", s.side_ref)
+            }
             Instruction::ToggleTerastallized(s) => {
                 write!(f, "ToggleTerastallized {:?}", s.side_ref)
             }
@@ -296,25 +289,22 @@ impl fmt::Debug for Instruction {
                     s.side_ref, s.previous_last_used_move, s.last_used_move
                 )
             }
-            Instruction::SetDamageDealtSideOne(s) => {
+            Instruction::ChangeDamageDealtDamage(s) => {
                 write!(
                     f,
-                    "SetDamageDealt SideOne: ({:?} -> {:?}) Damage Change: {:?} HitSub Change: {:?}",
-                    s.previous_move_category,
-                    s.move_category,
-                    s.damage_change,
-                    s.toggle_hit_substitute
+                    "ChangeDamageDealtDamage {:?}: {:?}",
+                    s.side_ref, s.damage_change
                 )
             }
-            Instruction::SetDamageDealtSideTwo(s) => {
+            Instruction::ChangeDamageDealtMoveCatagory(s) => {
                 write!(
                     f,
-                    "SetDamageDealt SideTwo: ({:?} -> {:?}) Damage Change: {:?} HitSub Change: {:?}",
-                    s.previous_move_category,
-                    s.move_category,
-                    s.damage_change,
-                    s.toggle_hit_substitute
+                    "ChangeDamageDealtMoveCatagory {:?}: {:?} -> {:?}",
+                    s.side_ref, s.previous_move_category, s.move_category
                 )
+            }
+            Instruction::ToggleDamageDealtHitSubstitute(s) => {
+                write!(f, "ToggleDamageDealtHitSubstitute {:?}", s.side_ref)
             }
             Instruction::DecrementPP(s) => {
                 write!(
@@ -347,19 +337,21 @@ impl fmt::Debug for Instruction {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SetDamageDealtSideOneInstruction {
+pub struct ChangeDamageDealtDamageInstruction {
+    pub side_ref: SideReference,
     pub damage_change: i16,
-    pub move_category: MoveCategory,
-    pub previous_move_category: MoveCategory,
-    pub toggle_hit_substitute: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SetDamageDealtSideTwoInstruction {
-    pub damage_change: i16,
+pub struct ChangeDamageDealtMoveCategoryInstruction {
+    pub side_ref: SideReference,
     pub move_category: MoveCategory,
     pub previous_move_category: MoveCategory,
-    pub toggle_hit_substitute: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ToggleDamageDealtHitSubstituteInstruction {
+    pub side_ref: SideReference,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -378,6 +370,11 @@ pub struct SetLastUsedMoveInstruction {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ToggleBatonPassingInstruction {
+    pub side_ref: SideReference,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ToggleShedTailingInstruction {
     pub side_ref: SideReference,
 }
 
@@ -469,8 +466,10 @@ pub struct ChangeSubsituteHealthInstruction {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FormeChangeInstruction {
     pub side_ref: SideReference,
-    pub new_forme: PokemonName,
-    pub previous_forme: PokemonName,
+
+    // PokemonName is represented as i16
+    // This is the amount the name has changed by
+    pub name_change: i16,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -561,8 +560,10 @@ pub struct ChangeType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ChangeAbilityInstruction {
     pub side_ref: SideReference,
-    pub new_ability: Abilities,
-    pub old_ability: Abilities,
+
+    // Abilities enum is an i16
+    // This is the amount the ability has changed by
+    pub ability_change: i16,
 }
 
 #[cfg(test)]
@@ -572,7 +573,7 @@ mod test {
     // Make sure that the size of the Instruction enum doesn't change
     #[test]
     fn test_instruction_size() {
-        assert_eq!(size_of::<Instruction>(), 8);
+        assert_eq!(size_of::<Instruction>(), 6);
         assert_eq!(align_of::<Instruction>(), 2);
     }
 }

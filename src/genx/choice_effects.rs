@@ -1,7 +1,11 @@
-use crate::abilities::Abilities;
-use crate::choices::{Boost, Choice, Choices, Heal, MoveCategory, MoveTarget, StatBoosts};
-use crate::damage_calc::type_effectiveness_modifier;
-use crate::generate_instructions::{add_remove_status_instructions, get_boost_instruction};
+use super::abilities::Abilities;
+use super::damage_calc::type_effectiveness_modifier;
+use super::generate_instructions::{add_remove_status_instructions, get_boost_instruction};
+use super::items::{get_choice_move_disable_instructions, Items};
+use super::state::{PokemonVolatileStatus, Terrain, Weather};
+use crate::choices::{
+    Boost, Choice, Choices, Effect, Heal, MoveCategory, MoveTarget, Secondary, StatBoosts,
+};
 use crate::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeItemInstruction,
     ChangeSideConditionInstruction, ChangeStatusInstruction, ChangeSubsituteHealthInstruction,
@@ -9,12 +13,10 @@ use crate::instruction::{
     HealInstruction, Instruction, RemoveVolatileStatusInstruction, SetFutureSightInstruction,
     SetSleepTurnsInstruction, StateInstructions, ToggleTrickRoomInstruction,
 };
-use crate::items::{get_choice_move_disable_instructions, Items};
 use crate::pokemon::PokemonName;
-use crate::state::Side;
 use crate::state::{
     pokemon_index_iter, LastUsedMove, PokemonBoostableStat, PokemonSideCondition, PokemonStatus,
-    PokemonType, PokemonVolatileStatus, SideReference, State, Terrain, Weather,
+    PokemonType, Side, SideReference, State,
 };
 use std::cmp;
 
@@ -114,7 +116,7 @@ pub fn modify_choice(
             // Technically not correct because of reviving moves but good enough
             let mut bp = 50.0;
             for pkmn in attacking_side.pokemon.into_iter() {
-                if pkmn.hp == 0 && pkmn.level != 1 {
+                if pkmn.hp == 0 {
                     bp += 50.0;
                 }
             }
@@ -314,6 +316,20 @@ pub fn modify_choice(
                 {
                     attacker_choice.category = MoveCategory::Physical;
                 }
+                if active.tera_type == PokemonType::STELLAR {
+                    attacker_choice.add_or_create_secondaries(Secondary {
+                        chance: 100.0,
+                        target: MoveTarget::User,
+                        effect: Effect::Boost(StatBoosts {
+                            attack: -1,
+                            defense: 0,
+                            special_attack: -1,
+                            special_defense: 0,
+                            speed: 0,
+                            accuracy: 0,
+                        }),
+                    })
+                }
             }
         }
         Choices::PHOTONGEYSER => {
@@ -369,7 +385,7 @@ pub fn modify_choice(
             }
             Weather::NONE => {}
         },
-        Choices::SOLARBEAM => {
+        Choices::SOLARBEAM | Choices::SOLARBLADE => {
             if state.weather_is_active(&Weather::SUN) || state.weather_is_active(&Weather::HARSHSUN)
             {
                 attacker_choice.flags.charge = false;
@@ -476,7 +492,7 @@ pub fn modify_choice(
                 attacker_choice.base_power *= 2.0;
             }
         }
-        Choices::STOREDPOWER => {
+        Choices::STOREDPOWER | Choices::POWERTRIP => {
             let total_boosts = attacking_side.attack_boost.max(0)
                 + attacking_side.defense_boost.max(0)
                 + attacking_side.special_attack_boost.max(0)
@@ -1147,7 +1163,7 @@ pub fn choice_hazard_clear(
 
 pub fn choice_special_effect(
     state: &mut State,
-    choice: &Choice,
+    choice: &mut Choice,
     attacking_side_ref: &SideReference,
     instructions: &mut StateInstructions,
 ) {
@@ -1444,7 +1460,7 @@ pub fn choice_special_effect(
             attacking_side.get_active().hp = target_hp;
             defending_side.get_active().hp = target_hp;
         }
-        Choices::SUBSTITUTE => {
+        Choices::SUBSTITUTE | Choices::SHEDTAIL => {
             if attacking_side
                 .volatile_statuses
                 .contains(&PokemonVolatileStatus::SUBSTITUTE)
@@ -1454,10 +1470,19 @@ pub fn choice_special_effect(
             let sub_current_health = attacking_side.substitute_health;
             let active_pkmn = attacking_side.get_active();
             let sub_target_health = active_pkmn.maxhp / 4;
-            if active_pkmn.hp > sub_target_health {
+            let pkmn_health_reduction = if choice.move_id == Choices::SHEDTAIL {
+                active_pkmn.maxhp / 2
+            } else {
+                sub_target_health
+            };
+            if active_pkmn.hp > pkmn_health_reduction {
+                if choice.move_id == Choices::SHEDTAIL {
+                    choice.flags.pivot = true;
+                }
+
                 let damage_instruction = Instruction::Damage(DamageInstruction {
                     side_ref: attacking_side_ref.clone(),
-                    damage_amount: sub_target_health,
+                    damage_amount: pkmn_health_reduction,
                 });
                 let set_sub_health_instruction =
                     Instruction::ChangeSubstituteHealth(ChangeSubsituteHealthInstruction {
@@ -1469,7 +1494,7 @@ pub fn choice_special_effect(
                         side_ref: attacking_side_ref.clone(),
                         volatile_status: PokemonVolatileStatus::SUBSTITUTE,
                     });
-                active_pkmn.hp -= sub_target_health;
+                active_pkmn.hp -= pkmn_health_reduction;
                 attacking_side.substitute_health = sub_target_health;
                 attacking_side
                     .volatile_statuses
@@ -1619,7 +1644,6 @@ pub fn choice_special_effect(
 }
 
 pub fn charge_choice_to_volatile(choice: &Choices) -> PokemonVolatileStatus {
-    // Panics if you pass a choice that does not have a corresponding volatile status
     match choice {
         Choices::BOUNCE => PokemonVolatileStatus::BOUNCE,
         Choices::DIG => PokemonVolatileStatus::DIG,
@@ -1641,5 +1665,28 @@ pub fn charge_choice_to_volatile(choice: &Choices) -> PokemonVolatileStatus {
         _ => {
             panic!("Invalid choice for charge: {:?}", choice)
         }
+    }
+}
+
+pub fn charge_volatile_to_choice(volatile: &PokemonVolatileStatus) -> Option<Choices> {
+    match volatile {
+        PokemonVolatileStatus::BOUNCE => Some(Choices::BOUNCE),
+        PokemonVolatileStatus::DIG => Some(Choices::DIG),
+        PokemonVolatileStatus::DIVE => Some(Choices::DIVE),
+        PokemonVolatileStatus::FLY => Some(Choices::FLY),
+        PokemonVolatileStatus::FREEZESHOCK => Some(Choices::FREEZESHOCK),
+        PokemonVolatileStatus::GEOMANCY => Some(Choices::GEOMANCY),
+        PokemonVolatileStatus::ICEBURN => Some(Choices::ICEBURN),
+        PokemonVolatileStatus::METEORBEAM => Some(Choices::METEORBEAM),
+        PokemonVolatileStatus::ELECTROSHOT => Some(Choices::ELECTROSHOT),
+        PokemonVolatileStatus::PHANTOMFORCE => Some(Choices::PHANTOMFORCE),
+        PokemonVolatileStatus::RAZORWIND => Some(Choices::RAZORWIND),
+        PokemonVolatileStatus::SHADOWFORCE => Some(Choices::SHADOWFORCE),
+        PokemonVolatileStatus::SKULLBASH => Some(Choices::SKULLBASH),
+        PokemonVolatileStatus::SKYATTACK => Some(Choices::SKYATTACK),
+        PokemonVolatileStatus::SKYDROP => Some(Choices::SKYDROP),
+        PokemonVolatileStatus::SOLARBEAM => Some(Choices::SOLARBEAM),
+        PokemonVolatileStatus::SOLARBLADE => Some(Choices::SOLARBLADE),
+        _ => None,
     }
 }

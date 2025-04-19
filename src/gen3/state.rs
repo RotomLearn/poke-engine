@@ -1,8 +1,10 @@
+use super::abilities::Abilities;
+use super::choice_effects::charge_volatile_to_choice;
 use crate::choices::Choices;
 use crate::define_enum_with_from_str;
 use crate::instruction::{
-    ChangeSideConditionInstruction, ChangeStatusInstruction, Instruction,
-    RemoveVolatileStatusInstruction,
+    ChangeSideConditionInstruction, ChangeType, ChangeVolatileStatusDurationInstruction,
+    Instruction, RemoveVolatileStatusInstruction,
 };
 use crate::state::{
     LastUsedMove, Pokemon, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex,
@@ -13,12 +15,12 @@ use std::collections::HashSet;
 
 fn multiply_boost(boost_num: i8, stat_value: i16) -> i16 {
     match boost_num {
-        -6 => stat_value * 25 / 100,
-        -5 => stat_value * 28 / 100,
-        -4 => stat_value * 33 / 100,
-        -3 => stat_value * 40 / 100,
-        -2 => stat_value * 50 / 100,
-        -1 => stat_value * 66 / 100,
+        -6 => stat_value * 2 / 8,
+        -5 => stat_value * 2 / 7,
+        -4 => stat_value * 2 / 6,
+        -3 => stat_value * 2 / 5,
+        -2 => stat_value * 2 / 4,
+        -1 => stat_value * 2 / 3,
         0 => stat_value,
         1 => stat_value * 3 / 2,
         2 => stat_value * 4 / 2,
@@ -26,7 +28,7 @@ fn multiply_boost(boost_num: i8, stat_value: i16) -> i16 {
         4 => stat_value * 6 / 2,
         5 => stat_value * 7 / 2,
         6 => stat_value * 8 / 2,
-        _ => panic!("Invalid boost number"),
+        _ => panic!("Invalid boost number: {}", boost_num),
     }
 }
 
@@ -176,7 +178,9 @@ define_enum_with_from_str! {
         TAUNT,
         TELEKINESIS,
         THROATCHOP,
+        TRUANT,
         TORMENT,
+        TYPECHANGE,
         UNBURDEN,
         UPROAR,
         YAWN,
@@ -193,9 +197,6 @@ define_enum_with_from_str! {
         RAIN,
         SAND,
         HAIL,
-        SNOW,
-        HARSHSUN,
-        HEAVYRAIN,
     }
 }
 
@@ -203,11 +204,7 @@ define_enum_with_from_str! {
     #[repr(u8)]
     #[derive(Debug, PartialEq, Copy, Clone)]
     Terrain {
-        NONE,
-        ELECTRICTERRAIN,
-        PSYCHICTERRAIN,
-        MISTYTERRAIN,
-        GRASSYTERRAIN,
+        NONE
     }
 }
 
@@ -224,11 +221,6 @@ impl Pokemon {
                 match last_used_move {
                     LastUsedMove::Move(last_used_move) => {
                         if encored && last_used_move != &iter.pokemon_move_index {
-                            continue;
-                        } else if (self.moves[last_used_move].id == Choices::BLOODMOON
-                            || self.moves[last_used_move].id == Choices::GIGATONHAMMER)
-                            && &iter.pokemon_move_index == last_used_move
-                        {
                             continue;
                         }
                     }
@@ -256,16 +248,15 @@ impl Pokemon {
         pkmn_type == &self.types.0 || pkmn_type == &self.types.1
     }
 
-    pub fn item_is_permanent(&self) -> bool {
-        false
-    }
-
     pub fn item_can_be_removed(&self) -> bool {
-        !self.item_is_permanent()
+        if self.ability == Abilities::STICKYHOLD {
+            return false;
+        }
+        true
     }
 
     pub fn is_grounded(&self) -> bool {
-        if self.has_type(&PokemonType::FLYING) {
+        if self.has_type(&PokemonType::FLYING) || self.ability == Abilities::LEVITATE {
             return false;
         }
         true
@@ -281,8 +272,15 @@ impl Pokemon {
             return false;
         }
         match volatile_status {
-            // grass immunity to leechseed covered by `powder`
-            PokemonVolatileStatus::LEECHSEED | PokemonVolatileStatus::CONFUSION => {
+            PokemonVolatileStatus::LEECHSEED => {
+                if self.has_type(&PokemonType::GRASS)
+                    || active_volatiles.contains(&PokemonVolatileStatus::SUBSTITUTE)
+                {
+                    return false;
+                }
+                true
+            }
+            PokemonVolatileStatus::CONFUSION => {
                 if active_volatiles.contains(&PokemonVolatileStatus::SUBSTITUTE) {
                     return false;
                 }
@@ -290,7 +288,7 @@ impl Pokemon {
             }
             PokemonVolatileStatus::SUBSTITUTE => self.hp > self.maxhp / 4,
             PokemonVolatileStatus::FLINCH => {
-                if !first_move {
+                if !first_move || [Abilities::INNERFOCUS].contains(&self.ability) {
                     return false;
                 }
                 true
@@ -302,17 +300,42 @@ impl Pokemon {
 
     pub fn immune_to_stats_lowered_by_opponent(
         &self,
-        _stat: &PokemonBoostableStat,
+        stat: &PokemonBoostableStat,
         volatiles: &HashSet<PokemonVolatileStatus>,
     ) -> bool {
+        if [Abilities::CLEARBODY, Abilities::WHITESMOKE].contains(&self.ability) {
+            return true;
+        }
+
         if volatiles.contains(&PokemonVolatileStatus::SUBSTITUTE) {
             return true;
         }
+
+        if stat == &PokemonBoostableStat::Attack && self.ability == Abilities::HYPERCUTTER {
+            return true;
+        } else if stat == &PokemonBoostableStat::Accuracy && self.ability == Abilities::KEENEYE {
+            return true;
+        }
+
         false
     }
 }
 
 impl Side {
+    pub fn active_is_charging_move(&self) -> Option<PokemonMoveIndex> {
+        for volatile in self.volatile_statuses.iter() {
+            if let Some(choice) = charge_volatile_to_choice(volatile) {
+                let mut iter = self.get_active_immutable().moves.into_iter();
+                while let Some(mv) = iter.next() {
+                    if mv.id == choice {
+                        return Some(iter.pokemon_move_index);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_boost_from_boost_enum(&self, boost_enum: &PokemonBoostableStat) -> i8 {
         match boost_enum {
             PokemonBoostableStat::Attack => self.attack_boost,
@@ -363,15 +386,6 @@ impl Side {
         false
     }
 
-    pub fn has_alive_frozen_pokemon(&self) -> bool {
-        for p in self.pokemon.into_iter() {
-            if p.status == PokemonStatus::FREEZE && p.hp > 0 {
-                return true;
-            }
-        }
-        false
-    }
-
     pub fn add_switches(&self, vec: &mut Vec<MoveChoice>) {
         let mut iter = self.pokemon.into_iter();
         while let Some(p) = iter.next() {
@@ -384,15 +398,25 @@ impl Side {
         }
     }
 
-    pub fn trapped(&self, _opponent_active: &Pokemon) -> bool {
+    pub fn trapped(&self, opponent_active: &Pokemon) -> bool {
+        let active_pkmn = self.get_active_immutable();
         if self
             .volatile_statuses
             .contains(&PokemonVolatileStatus::LOCKEDMOVE)
         {
             return true;
-        } else if self
+        }
+        if self
             .volatile_statuses
             .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
+        {
+            return true;
+        } else if opponent_active.ability == Abilities::SHADOWTAG {
+            return true;
+        } else if opponent_active.ability == Abilities::ARENATRAP && active_pkmn.is_grounded() {
+            return true;
+        } else if opponent_active.ability == Abilities::MAGNETPULL
+            && active_pkmn.has_type(&PokemonType::STEEL)
         {
             return true;
         }
@@ -531,6 +555,8 @@ impl State {
             .contains(&PokemonVolatileStatus::MUSTRECHARGE)
         {
             side_one_options.push(MoveChoice::None);
+        } else if let Some(mv_index) = self.side_one.active_is_charging_move() {
+            side_one_options.push(MoveChoice::Move(mv_index));
         } else {
             let encored = self
                 .side_one
@@ -552,6 +578,8 @@ impl State {
             .contains(&PokemonVolatileStatus::MUSTRECHARGE)
         {
             side_two_options.push(MoveChoice::None);
+        } else if let Some(mv_index) = self.side_two.active_is_charging_move() {
+            side_two_options.push(MoveChoice::Move(mv_index));
         } else {
             let encored = self
                 .side_two
@@ -577,7 +605,11 @@ impl State {
         (side_one_options, side_two_options)
     }
 
-    pub fn reset_toxic(&mut self, side_ref: &SideReference, vec_to_add_to: &mut Vec<Instruction>) {
+    pub fn reset_toxic_count(
+        &mut self,
+        side_ref: &SideReference,
+        vec_to_add_to: &mut Vec<Instruction>,
+    ) {
         let side = self.get_side(side_ref);
         if side.side_conditions.toxic_count > 0 {
             vec_to_add_to.push(Instruction::ChangeSideCondition(
@@ -589,62 +621,85 @@ impl State {
             ));
             side.side_conditions.toxic_count = 0;
         }
-        let active = side.get_active();
-        if active.status == PokemonStatus::TOXIC {
-            active.status = PokemonStatus::POISON;
-            vec_to_add_to.push(Instruction::ChangeStatus(ChangeStatusInstruction {
-                side_ref: *side_ref,
-                pokemon_index: side.active_index,
-                old_status: PokemonStatus::TOXIC,
-                new_status: PokemonStatus::POISON,
-            }));
-        }
     }
 
     pub fn remove_volatile_statuses_on_switch(
         &mut self,
         side_ref: &SideReference,
-        vec_to_add_to: &mut Vec<Instruction>,
+        instructions: &mut Vec<Instruction>,
         baton_passing: bool,
     ) {
         let side = self.get_side(side_ref);
-        let mut should_preserve_leechseed = false;
-        let mut should_preserve_substitute = false;
-        for pkmn_volatile_status in &side.volatile_statuses {
-            // dont remove substitute or leechseed if batonpassing
-            if baton_passing {
-                if pkmn_volatile_status == &PokemonVolatileStatus::SUBSTITUTE {
-                    should_preserve_substitute = true;
-                    continue;
-                } else if pkmn_volatile_status == &PokemonVolatileStatus::LEECHSEED {
-                    should_preserve_leechseed = true;
-                    continue;
-                }
-            }
-            vec_to_add_to.push(Instruction::RemoveVolatileStatus(
-                RemoveVolatileStatusInstruction {
-                    side_ref: *side_ref,
-                    volatile_status: *pkmn_volatile_status,
-                },
-            ));
-        }
-        side.volatile_statuses.drain();
-        if should_preserve_leechseed {
-            side.volatile_statuses
-                .insert(PokemonVolatileStatus::LEECHSEED);
-        }
-        if should_preserve_substitute {
-            side.volatile_statuses
-                .insert(PokemonVolatileStatus::SUBSTITUTE);
-        }
-    }
 
-    pub fn terrain_is_active(&self, terrain: &Terrain) -> bool {
-        &self.terrain.terrain_type == terrain && self.terrain.turns_remaining > 0
+        // Take ownership of the current set to avoid borrow conflicts
+        // since we may need to modify the side in the loop
+        let mut volatile_statuses = std::mem::take(&mut side.volatile_statuses);
+
+        volatile_statuses.retain(|pkmn_volatile_status| {
+            let should_retain = match pkmn_volatile_status {
+                PokemonVolatileStatus::SUBSTITUTE => baton_passing,
+                PokemonVolatileStatus::LEECHSEED => baton_passing,
+                PokemonVolatileStatus::TYPECHANGE => {
+                    let active = side.get_active();
+                    if active.base_types != active.types {
+                        instructions.push(Instruction::ChangeType(ChangeType {
+                            side_ref: *side_ref,
+                            new_types: active.base_types,
+                            old_types: active.types,
+                        }));
+                        active.types = active.base_types;
+                    }
+                    false
+                }
+                // While you can't switch out of a locked move you can be forced out in other ways
+                PokemonVolatileStatus::LOCKEDMOVE => {
+                    instructions.push(Instruction::ChangeVolatileStatusDuration(
+                        ChangeVolatileStatusDurationInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: *pkmn_volatile_status,
+                            amount: -1 * side.volatile_status_durations.lockedmove,
+                        },
+                    ));
+                    side.volatile_status_durations.lockedmove = 0;
+                    false
+                }
+                PokemonVolatileStatus::YAWN => {
+                    instructions.push(Instruction::ChangeVolatileStatusDuration(
+                        ChangeVolatileStatusDurationInstruction {
+                            side_ref: *side_ref,
+                            volatile_status: *pkmn_volatile_status,
+                            amount: -1 * side.volatile_status_durations.yawn,
+                        },
+                    ));
+                    side.volatile_status_durations.yawn = 0;
+                    false
+                }
+                _ => false,
+            };
+
+            if !should_retain {
+                instructions.push(Instruction::RemoveVolatileStatus(
+                    RemoveVolatileStatusInstruction {
+                        side_ref: *side_ref,
+                        volatile_status: *pkmn_volatile_status,
+                    },
+                ));
+            }
+            should_retain
+        });
+
+        // Clean up by re-setting the volatile statuses
+        side.volatile_statuses = volatile_statuses;
     }
 
     pub fn weather_is_active(&self, weather: &Weather) -> bool {
+        let s1_active = self.side_one.get_active_immutable();
+        let s2_active = self.side_two.get_active_immutable();
         &self.weather.weather_type == weather
+            && s1_active.ability != Abilities::AIRLOCK
+            && s1_active.ability != Abilities::CLOUDNINE
+            && s2_active.ability != Abilities::AIRLOCK
+            && s2_active.ability != Abilities::CLOUDNINE
     }
 
     fn _state_contains_any_move(&self, moves: &[Choices]) -> bool {
@@ -665,8 +720,6 @@ impl State {
         if self._state_contains_any_move(&[
             Choices::COUNTER,
             Choices::MIRRORCOAT,
-            Choices::METALBURST,
-            Choices::COMEUPPANCE,
             Choices::FOCUSPUNCH,
         ]) {
             self.use_damage_dealt = true
@@ -674,13 +727,7 @@ impl State {
     }
 
     pub fn set_last_used_move_flag(&mut self) {
-        if self._state_contains_any_move(&[
-            Choices::ENCORE,
-            Choices::FAKEOUT,
-            Choices::FIRSTIMPRESSION,
-            Choices::BLOODMOON,
-            Choices::GIGATONHAMMER,
-        ]) {
+        if self._state_contains_any_move(&[Choices::ENCORE, Choices::FAKEOUT]) {
             self.use_last_used_move = true
         }
     }
