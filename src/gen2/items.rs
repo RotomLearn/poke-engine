@@ -1,12 +1,14 @@
 #![allow(unused_variables)]
-use crate::choices::{Choice, Choices};
-use crate::define_enum_with_from_str;
-use crate::instruction::{
+use super::instruction::{
     ChangeItemInstruction, ChangeStatusInstruction, DisableMoveInstruction, HealInstruction,
     Instruction, StateInstructions,
 };
+use super::state::State;
+use super::state::{Pokemon, PokemonType};
+use super::state::{PokemonStatus, Side, SideReference};
+use crate::choices::{Choice, Choices};
+use crate::define_enum_with_from_str;
 use crate::pokemon::PokemonName;
-use crate::state::{Pokemon, PokemonStatus, PokemonType, Side, SideReference, State};
 use std::cmp;
 
 define_enum_with_from_str! {

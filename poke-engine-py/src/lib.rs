@@ -1,37 +1,24 @@
-use pyo3::prelude::*;
-use pyo3::{pyfunction, pymethods, pymodule, wrap_pyfunction, Bound, PyResult};
-use std::collections::HashSet;
-
+use poke_engine::abilities::Abilities;
 use poke_engine::choices::{Choices, MoveCategory, MOVES};
-use poke_engine::engine::abilities::Abilities;
-use poke_engine::engine::generate_instructions::{
+use poke_engine::generate_instructions::{
     calculate_both_damage_rolls, generate_instructions_from_move_pair,
 };
-use poke_engine::engine::items::Items;
-use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
 use poke_engine::instruction::{Instruction, StateInstructions};
+use poke_engine::io::io_get_all_options;
+use poke_engine::items::Items;
 use poke_engine::mcts::{perform_mcts, MctsResult, MctsSideResult};
 use poke_engine::pokemon::PokemonName;
 use poke_engine::search::iterative_deepen_expectiminimax;
 use poke_engine::state::{
-    LastUsedMove, Move, Pokemon, PokemonIndex, PokemonMoves, PokemonNature, PokemonStatus,
-    PokemonType, Side, SideConditions, SidePokemon, State, StateTerrain, StateTrickRoom,
-    StateWeather, VolatileStatusDurations,
+    LastUsedMove, Move, MoveChoice, Pokemon, PokemonIndex, PokemonMoves, PokemonNature,
+    PokemonStatus, PokemonType, PokemonVolatileStatus, Side, SideConditions, SidePokemon, State,
+    StateTerrain, StateTrickRoom, StateWeather, Terrain, VolatileStatusDurations, Weather,
 };
 use pyo3::prelude::*;
 use pyo3::{pyfunction, pymethods, pymodule, wrap_pyfunction, Bound, PyResult};
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
-
-fn movechoice_to_string(side: &Side, move_choice: &MoveChoice) -> String {
-    match move_choice {
-        MoveChoice::Switch(_) => {
-            format!("switch {}", move_choice.to_string(side))
-        }
-        _ => move_choice.to_string(side),
-    }
-}
 
 #[derive(Clone)]
 #[pyclass(name = "State")]
@@ -158,7 +145,6 @@ impl PySide {
     fn new(
         active_index: String,
         baton_passing: bool,
-        shed_tailing: bool,
         mut pokemon: Vec<PyPokemon>,
         side_conditions: PySideConditions,
         volatile_status_durations: PyVolatileStatusDurations,
@@ -190,7 +176,6 @@ impl PySide {
             side: Side {
                 active_index: PokemonIndex::deserialize(&active_index),
                 baton_passing,
-                shed_tailing,
                 pokemon: SidePokemon {
                     p0: pokemon[0].create_pokemon(),
                     p1: pokemon[1].create_pokemon(),
@@ -365,20 +350,12 @@ impl PyVolatileStatusDurations {
 #[pymethods]
 impl PyVolatileStatusDurations {
     #[new]
-    fn new(
-        confusion: i8,
-        encore: i8,
-        lockedmove: i8,
-        slowstart: i8,
-        yawn: i8,
-    ) -> PyVolatileStatusDurations {
+    fn new(confusion: i8, encore: i8, lockedmove: i8) -> PyVolatileStatusDurations {
         PyVolatileStatusDurations {
             volatile_status_durations: VolatileStatusDurations {
                 confusion,
                 encore,
                 lockedmove,
-                slowstart,
-                yawn,
             },
         }
     }
@@ -585,7 +562,7 @@ impl PyPokemon {
         terastallized: bool,
         tera_type: String,
     ) -> Self {
-        while moves.len() < 4 {
+        while moves.len() < 6 {
             moves.push(PyMove::create_empty_move());
         }
         PyPokemon {
@@ -798,7 +775,7 @@ struct PyMctsSideResult {
 impl PyMctsSideResult {
     fn from_mcts_side_result(result: MctsSideResult, side: &Side) -> Self {
         PyMctsSideResult {
-            move_choice: movechoice_to_string(side, &result.move_choice),
+            move_choice: result.move_choice.to_string(side),
             total_score: result.total_score,
             visits: result.visits,
         }
@@ -858,12 +835,12 @@ impl PyIterativeDeepeningResult {
             s1: result
                 .0
                 .iter()
-                .map(|c| movechoice_to_string(&state.side_one, c))
+                .map(|c| c.to_string(&state.side_one))
                 .collect(),
             s2: result
                 .1
                 .iter()
-                .map(|c| movechoice_to_string(&state.side_two, c))
+                .map(|c| c.to_string(&state.side_two))
                 .collect(),
             matrix: result.2,
             depth_searched: result.3,
@@ -874,7 +851,7 @@ impl PyIterativeDeepeningResult {
 #[pyfunction]
 fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
     let duration = Duration::from_millis(duration_ms);
-    let (s1_options, s2_options) = py_state.state.root_get_all_options();
+    let (s1_options, s2_options) = io_get_all_options(&py_state.state);
     let mcts_result = perform_mcts(&mut py_state.state, s1_options, s2_options, duration);
 
     let py_mcts_result = PyMctsResult::from_mcts_result(mcts_result, &py_state.state);
@@ -884,7 +861,7 @@ fn mcts(mut py_state: PyState, duration_ms: u64) -> PyResult<PyMctsResult> {
 #[pyfunction]
 fn id(mut py_state: PyState, duration_ms: u64) -> PyResult<PyIterativeDeepeningResult> {
     let duration = Duration::from_millis(duration_ms);
-    let (s1_options, s2_options) = py_state.state.root_get_all_options();
+    let (s1_options, s2_options) = io_get_all_options(&py_state.state);
     let id_result =
         iterative_deepen_expectiminimax(&mut py_state.state, s1_options, s2_options, duration);
 
@@ -948,7 +925,7 @@ fn gi(
     side_two_move: String,
 ) -> PyResult<Vec<PyStateInstructions>> {
     let (s1_move, s2_move);
-    match MoveChoice::from_string(&side_one_move, &py_state.state.side_one) {
+    match py_state.state.side_one.string_to_movechoice(&side_one_move) {
         Some(m) => s1_move = m,
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -957,7 +934,7 @@ fn gi(
             )))
         }
     }
-    match MoveChoice::from_string(&side_two_move, &py_state.state.side_two) {
+    match py_state.state.side_two.string_to_movechoice(&side_two_move) {
         Some(m) => s2_move = m,
         None => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -1015,11 +992,11 @@ fn calculate_damage(
     let (s1_py_rolls, s2_py_rolls);
     match s1_damage_rolls {
         Some(rolls) => s1_py_rolls = rolls,
-        None => s1_py_rolls = vec![0, 0],
+        None => s1_py_rolls = vec![0],
     }
     match s2_damage_rolls {
         Some(rolls) => s2_py_rolls = rolls,
-        None => s2_py_rolls = vec![0, 0],
+        None => s2_py_rolls = vec![0],
     }
 
     Ok((s1_py_rolls, s2_py_rolls))

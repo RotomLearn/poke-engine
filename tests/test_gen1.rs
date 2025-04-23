@@ -1,19 +1,20 @@
 #![cfg(feature = "gen1")]
 
+use poke_engine::choices::MoveCategory;
 use poke_engine::choices::{Choices, MOVES};
-use poke_engine::engine::generate_instructions::{
+use poke_engine::generate_instructions::{
     generate_instructions_from_move_pair, moves_first, MAX_SLEEP_TURNS,
 };
-use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus};
 use poke_engine::instruction::{
-    ApplyVolatileStatusInstruction, BoostInstruction, ChangeDamageDealtDamageInstruction,
-    ChangeStatusInstruction, DamageInstruction, DecrementRestTurnsInstruction, HealInstruction,
-    Instruction, RemoveVolatileStatusInstruction, SetSleepTurnsInstruction, StateInstructions,
-    SwitchInstruction,
+    ApplyVolatileStatusInstruction, BoostInstruction, ChangeStatusInstruction, DamageInstruction,
+    DecrementRestTurnsInstruction, HealInstruction, Instruction, RemoveVolatileStatusInstruction,
+    SetDamageDealtSideOneInstruction, SetDamageDealtSideTwoInstruction, SetSleepTurnsInstruction,
+    StateInstructions, SwitchInstruction,
 };
 use poke_engine::pokemon::PokemonName;
+use poke_engine::state::PokemonBoostableStat;
 use poke_engine::state::{
-    PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonStatus, PokemonType,
+    MoveChoice, PokemonIndex, PokemonMoveIndex, PokemonStatus, PokemonType, PokemonVolatileStatus,
     SideReference, State,
 };
 
@@ -302,15 +303,16 @@ fn test_paralysis_nullify_ignores_paralysis() {
     let s1_choice = MOVES.get(&Choices::TACKLE).unwrap().clone();
     let s2_choice = MOVES.get(&Choices::TACKLE).unwrap().clone();
 
-    let moves_first_before = moves_first(&state, &s1_choice, &s2_choice);
+    let moves_first = moves_first(&state, &s1_choice, &s2_choice);
     state
         .side_one
         .volatile_statuses
         .insert(PokemonVolatileStatus::GEN1PARALYSISNULLIFY);
-    let moves_first_after_volatile = moves_first(&state, &s1_choice, &s2_choice);
+    let moves_first_after_volatile =
+        poke_engine::generate_instructions::moves_first(&state, &s1_choice, &s2_choice);
 
     // assert side one moves first is different, because the nullify volatile should cause paralysis to be ignored
-    assert_ne!(moves_first_before, moves_first_after_volatile);
+    assert_ne!(moves_first, moves_first_after_volatile);
 }
 
 #[test]
@@ -643,9 +645,11 @@ fn test_counter_into_normal_move() {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 48,
             }),
-            Instruction::ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction {
-                side_ref: SideReference::SideOne,
+            Instruction::SetDamageDealtSideOne(SetDamageDealtSideOneInstruction {
                 damage_change: 48,
+                move_category: MoveCategory::Physical,
+                previous_move_category: MoveCategory::Physical,
+                toggle_hit_substitute: false,
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
@@ -674,9 +678,11 @@ fn test_counter_into_fighting_move() {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 61,
             }),
-            Instruction::ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction {
-                side_ref: SideReference::SideOne,
+            Instruction::SetDamageDealtSideOne(SetDamageDealtSideOneInstruction {
                 damage_change: 61,
+                move_category: MoveCategory::Physical,
+                previous_move_category: MoveCategory::Physical,
+                toggle_hit_substitute: false,
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
@@ -756,9 +762,11 @@ fn test_gen1_bite_flinch_with_counter() {
                     side_ref: SideReference::SideTwo,
                     damage_amount: 72,
                 }),
-                Instruction::ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction {
-                    side_ref: SideReference::SideOne,
+                Instruction::SetDamageDealtSideOne(SetDamageDealtSideOneInstruction {
                     damage_change: 72,
+                    move_category: MoveCategory::Physical,
+                    previous_move_category: MoveCategory::Physical,
+                    toggle_hit_substitute: false,
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
@@ -773,9 +781,11 @@ fn test_gen1_bite_flinch_with_counter() {
                     side_ref: SideReference::SideTwo,
                     damage_amount: 72,
                 }),
-                Instruction::ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction {
-                    side_ref: SideReference::SideOne,
+                Instruction::SetDamageDealtSideOne(SetDamageDealtSideOneInstruction {
                     damage_change: 72,
+                    move_category: MoveCategory::Physical,
+                    previous_move_category: MoveCategory::Physical,
+                    toggle_hit_substitute: false,
                 }),
                 Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
                     side_ref: SideReference::SideTwo,
@@ -1075,9 +1085,11 @@ fn test_counter_hits_ghost_type() {
                 side_ref: SideReference::SideOne,
                 damage_amount: 32,
             }),
-            Instruction::ChangeDamageDealtDamage(ChangeDamageDealtDamageInstruction {
-                side_ref: SideReference::SideTwo,
+            Instruction::SetDamageDealtSideTwo(SetDamageDealtSideTwoInstruction {
                 damage_change: 32,
+                move_category: MoveCategory::Physical,
+                previous_move_category: MoveCategory::Physical,
+                toggle_hit_substitute: false,
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,

@@ -1,9 +1,11 @@
-use super::state::{PokemonVolatileStatus, Weather};
-use crate::choices::{Choice, MoveCategory};
 use crate::choices::{Choices, MOVES};
-use crate::state::{
-    Pokemon, PokemonBoostableStat, PokemonIndex, PokemonStatus, PokemonType, Side, SideReference,
-    State,
+use crate::state::{PokemonIndex, Side};
+use crate::{
+    choices::{Choice, MoveCategory},
+    state::{
+        Pokemon, PokemonBoostableStat, PokemonStatus, PokemonType, PokemonVolatileStatus,
+        SideReference, State, Weather,
+    },
 };
 
 #[rustfmt::skip]

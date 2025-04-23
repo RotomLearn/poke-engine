@@ -1,23 +1,21 @@
 #![allow(unused_variables)]
-use super::abilities::Abilities;
-use super::damage_calc::type_effectiveness_modifier;
-use super::generate_instructions::{get_boost_instruction, immune_to_status};
-use super::state::Terrain;
+use crate::abilities::Abilities;
 use crate::choices::{Choice, Choices, Effect, MoveCategory, MoveTarget, Secondary, StatBoosts};
+use crate::damage_calc::type_effectiveness_modifier;
 use crate::define_enum_with_from_str;
-use crate::engine::generate_instructions::add_remove_status_instructions;
+use crate::generate_instructions::{get_boost_instruction, immune_to_status};
 use crate::instruction::{
     ChangeItemInstruction, ChangeStatusInstruction, DamageInstruction, DisableMoveInstruction,
     HealInstruction, Instruction, StateInstructions,
 };
 use crate::pokemon::PokemonName;
-use crate::state::{
-    Pokemon, PokemonBoostableStat, PokemonStatus, PokemonType, Side, SideReference, State,
-};
+use crate::state::{Pokemon, PokemonType, Side};
+use crate::state::{PokemonBoostableStat, State, Terrain};
+use crate::state::{PokemonStatus, SideReference};
 use std::cmp;
 
 #[cfg(feature = "gen4")]
-use super::state::PokemonVolatileStatus;
+use crate::state::PokemonVolatileStatus;
 
 define_enum_with_from_str! {
     #[repr(u8)]
@@ -131,7 +129,6 @@ define_enum_with_from_str! {
         PIXIEPLATE,
         LIGHTBALL,
         FOCUSSASH,
-        CHESTOBERRY,
         LUMBERRY,
         SITRUSBERRY,
         PETAYABERRY,
@@ -312,41 +309,25 @@ fn sitrus_berry(
     active_pkmn.item = Items::NONE;
 }
 
-fn chesto_berry(
-    side_ref: &SideReference,
-    attacking_side: &mut Side,
-    instructions: &mut StateInstructions,
-) {
-    let active_index = attacking_side.active_index;
-    let active_pkmn = attacking_side.get_active();
-    instructions
-        .instruction_list
-        .push(Instruction::ChangeItem(ChangeItemInstruction {
-            side_ref: *side_ref,
-            current_item: Items::CHESTOBERRY,
-            new_item: Items::NONE,
-        }));
-    active_pkmn.item = Items::NONE;
-    add_remove_status_instructions(instructions, active_index, *side_ref, attacking_side);
-}
-
 fn boost_berry(
     side_ref: &SideReference,
-    state: &mut State,
+    attacking_side: &mut Side,
     stat: PokemonBoostableStat,
     instructions: &mut StateInstructions,
 ) {
-    if let Some(ins) = get_boost_instruction(
-        &state.get_side_immutable(side_ref),
-        &stat,
-        &1,
-        side_ref,
-        side_ref,
-    ) {
-        state.apply_one_instruction(&ins);
+    if let Some(ins) = get_boost_instruction(&attacking_side, &stat, &1, side_ref, side_ref) {
+        match stat {
+            PokemonBoostableStat::Attack => attacking_side.attack_boost += 1,
+            PokemonBoostableStat::Defense => attacking_side.defense_boost += 1,
+            PokemonBoostableStat::SpecialAttack => attacking_side.special_attack_boost += 1,
+            PokemonBoostableStat::SpecialDefense => attacking_side.special_defense_boost += 1,
+            PokemonBoostableStat::Speed => attacking_side.speed_boost += 1,
+            PokemonBoostableStat::Accuracy => attacking_side.accuracy_boost += 1,
+            PokemonBoostableStat::Evasion => attacking_side.evasion_boost += 1,
+        }
         instructions.instruction_list.push(ins);
     }
-    let attacker = state.get_side(side_ref).get_active();
+    let attacker = attacking_side.get_active();
     instructions
         .instruction_list
         .push(Instruction::ChangeItem(ChangeItemInstruction {
@@ -354,7 +335,7 @@ fn boost_berry(
             current_item: attacker.item,
             new_item: Items::NONE,
         }));
-    attacker.item = Items::NONE;
+    attacking_side.get_active().item = Items::NONE;
 }
 
 pub fn item_before_move(
@@ -658,21 +639,24 @@ pub fn item_before_move(
         Items::SITRUSBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
-        Items::CHESTOBERRY if active_pkmn.status == PokemonStatus::SLEEP => {
-            chesto_berry(side_ref, attacking_side, instructions)
-        }
         Items::PETAYABERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
             side_ref,
-            state,
+            attacking_side,
             PokemonBoostableStat::SpecialAttack,
             instructions,
         ),
-        Items::LIECHIBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => {
-            boost_berry(side_ref, state, PokemonBoostableStat::Attack, instructions)
-        }
-        Items::SALACBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => {
-            boost_berry(side_ref, state, PokemonBoostableStat::Speed, instructions)
-        }
+        Items::LIECHIBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
+            side_ref,
+            attacking_side,
+            PokemonBoostableStat::Attack,
+            instructions,
+        ),
+        Items::SALACBERRY if active_pkmn.hp <= active_pkmn.maxhp / 4 => boost_berry(
+            side_ref,
+            attacking_side,
+            PokemonBoostableStat::Speed,
+            instructions,
+        ),
         Items::CHOICESPECS | Items::CHOICEBAND | Items::CHOICESCARF => {
             let ins = get_choice_move_disable_instructions(active_pkmn, side_ref, &choice.move_id);
             for i in ins {
@@ -801,9 +785,6 @@ pub fn item_end_of_turn(
         Items::SITRUSBERRY if active_pkmn.hp <= active_pkmn.maxhp / 2 => {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
-        Items::CHESTOBERRY if active_pkmn.status == PokemonStatus::SLEEP => {
-            chesto_berry(side_ref, attacking_side, instructions)
-        }
         Items::BLACKSLUDGE => {
             if active_pkmn.has_type(&PokemonType::POISON) {
                 if active_pkmn.hp < active_pkmn.maxhp {
@@ -902,9 +883,7 @@ pub fn item_modify_attack_against(
                 && attacking_choice.move_id != Choices::THOUSANDARROWS
             {
                 attacking_choice.base_power = 0.0;
-            } else if attacking_choice.target == MoveTarget::Opponent
-                && attacking_choice.category != MoveCategory::Status
-            {
+            } else {
                 attacking_choice.add_or_create_secondaries(Secondary {
                     chance: 100.0,
                     effect: Effect::RemoveItem,

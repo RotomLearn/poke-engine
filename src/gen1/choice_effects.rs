@@ -1,11 +1,12 @@
-use super::items::get_choice_move_disable_instructions;
-use super::state::{PokemonVolatileStatus, Weather};
 use crate::choices::{Choice, Choices, MoveTarget};
 use crate::instruction::{
     ApplyVolatileStatusInstruction, ChangeStatusInstruction, ChangeSubsituteHealthInstruction,
     DamageInstruction, HealInstruction, Instruction, SetSleepTurnsInstruction, StateInstructions,
 };
-use crate::state::{PokemonStatus, PokemonType, SideReference, State};
+use crate::items::get_choice_move_disable_instructions;
+use crate::state::{
+    PokemonStatus, PokemonType, PokemonVolatileStatus, SideReference, State, Weather,
+};
 use std::cmp;
 
 pub fn modify_choice(

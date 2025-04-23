@@ -1,6 +1,5 @@
-use crate::engine::evaluate::evaluate;
-use crate::engine::generate_instructions::generate_instructions_from_move_pair;
-use crate::engine::state::MoveChoice;
+use crate::evaluate::evaluate;
+use crate::generate_instructions::generate_instructions_from_move_pair;
 use crate::instruction::StateInstructions;
 use crate::state::{MoveChoice, PokemonIndex, State};
 use rand::distributions::WeightedIndex;
@@ -137,7 +136,7 @@ impl Node {
         let should_branch_on_damage = self.root || (*self.parent).root;
         let mut new_instructions =
             generate_instructions_from_move_pair(state, s1_move, s2_move, should_branch_on_damage);
-        let mut this_pair_vec = Vec::with_capacity(new_instructions.len());
+        let mut this_pair_vec = Vec::with_capacity(2);
         for state_instructions in new_instructions.drain(..) {
             state.apply_instructions(&state_instructions.instruction_list);
             let (s1_options, s2_options) = state.get_all_options();

@@ -1,7 +1,7 @@
 #![cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
 
 use poke_engine::choices::Choices;
-use poke_engine::engine::generate_instructions::generate_instructions_from_move_pair;
+use poke_engine::generate_instructions::generate_instructions_from_move_pair;
 use poke_engine::instruction::{
     ApplyVolatileStatusInstruction, DamageInstruction, Instruction,
     RemoveVolatileStatusInstruction, SetLastUsedMoveInstruction, StateInstructions,
@@ -12,7 +12,7 @@ use poke_engine::instruction::{
 use poke_engine::instruction::ChangeSubsituteHealthInstruction;
 
 #[cfg(not(feature = "terastallization"))]
-use poke_engine::engine::abilities::Abilities;
+use poke_engine::abilities::Abilities;
 
 #[cfg(not(feature = "gen4"))]
 use poke_engine::state::PokemonBoostableStat;
@@ -20,9 +20,10 @@ use poke_engine::state::PokemonBoostableStat;
 #[cfg(not(feature = "gen4"))]
 use poke_engine::instruction::{BoostInstruction, ChangeVolatileStatusDurationInstruction};
 
-use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus};
-
-use poke_engine::state::{LastUsedMove, PokemonIndex, PokemonMoveIndex, SideReference, State};
+use poke_engine::state::{
+    LastUsedMove, MoveChoice, PokemonIndex, PokemonMoveIndex, PokemonVolatileStatus, SideReference,
+    State,
+};
 
 #[test]
 fn test_last_used_move_is_set_on_switch() {

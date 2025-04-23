@@ -1,24 +1,22 @@
 #![allow(unused_variables)]
-use super::damage_calc::type_effectiveness_modifier;
-use super::generate_instructions::{add_remove_status_instructions, get_boost_instruction};
-use super::items::{get_choice_move_disable_instructions, Items};
-use super::state::{PokemonVolatileStatus, Terrain, Weather};
 use crate::choices::{
     Boost, Choice, Choices, Effect, Heal, MoveCategory, MoveTarget, Secondary, StatBoosts,
     VolatileStatus,
 };
+use crate::damage_calc::type_effectiveness_modifier;
 use crate::define_enum_with_from_str;
+use crate::generate_instructions::{add_remove_status_instructions, get_boost_instruction};
 use crate::instruction::{
     ApplyVolatileStatusInstruction, BoostInstruction, ChangeAbilityInstruction,
     ChangeItemInstruction, ChangeSideConditionInstruction, ChangeStatusInstruction, ChangeTerrain,
-    ChangeType, ChangeVolatileStatusDurationInstruction, ChangeWeather, DamageInstruction,
-    FormeChangeInstruction, HealInstruction, Instruction, StateInstructions,
+    ChangeType, ChangeWeather, DamageInstruction, FormeChangeInstruction, HealInstruction,
+    Instruction, StateInstructions,
 };
+use crate::items::{get_choice_move_disable_instructions, Items};
 use crate::pokemon::PokemonName;
-use crate::state::{
-    PokemonBoostableStat, PokemonSideCondition, PokemonStatus, PokemonType, Side, SideReference,
-    State,
-};
+use crate::state::{PokemonBoostableStat, PokemonSideCondition, PokemonType, Side, Terrain};
+use crate::state::{PokemonStatus, State};
+use crate::state::{PokemonVolatileStatus, SideReference, Weather};
 use std::cmp;
 
 #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
@@ -28,7 +26,7 @@ pub const WEATHER_ABILITY_TURNS: i8 = -1;
 pub const WEATHER_ABILITY_TURNS: i8 = 5;
 
 define_enum_with_from_str! {
-    #[repr(i16)]
+    #[repr(u16)]
     #[derive(PartialEq, Debug, Clone, Copy)]
     Abilities {
         NONE,
@@ -529,7 +527,8 @@ pub fn ability_before_move(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: side_ref.get_other_side(),
-                        name_change: PokemonName::EISCUENOICE as i16 - defending_pkmn.id as i16,
+                        previous_forme: defending_pkmn.id,
+                        new_forme: PokemonName::EISCUENOICE,
                     },
                 ));
                 defending_pkmn.id = PokemonName::EISCUENOICE;
@@ -550,7 +549,8 @@ pub fn ability_before_move(
                 .instruction_list
                 .push(Instruction::FormeChange(FormeChangeInstruction {
                     side_ref: side_ref.get_other_side(),
-                    name_change: PokemonName::MIMIKYUBUSTED as i16 - defending_pkmn.id as i16,
+                    previous_forme: defending_pkmn.id,
+                    new_forme: PokemonName::MIMIKYUBUSTED,
                 }));
             defending_pkmn.id = PokemonName::MIMIKYUBUSTED;
         }
@@ -566,7 +566,8 @@ pub fn ability_before_move(
                 .instruction_list
                 .push(Instruction::FormeChange(FormeChangeInstruction {
                     side_ref: side_ref.get_other_side(),
-                    name_change: PokemonName::MIMIKYUBUSTED as i16 - defending_pkmn.id as i16,
+                    previous_forme: defending_pkmn.id,
+                    new_forme: PokemonName::MIMIKYUBUSTED,
                 }));
             defending_pkmn.id = PokemonName::MIMIKYUBUSTED;
             let dmg = cmp::min(defending_pkmn.hp, defending_pkmn.maxhp / 8);
@@ -593,7 +594,8 @@ pub fn ability_before_move(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: new_forme as i16 - active_pkmn.id as i16,
+                        new_forme,
+                        previous_forme: PokemonName::CRAMORANT,
                     },
                 ));
                 active_pkmn.id = new_forme;
@@ -796,7 +798,8 @@ pub fn ability_after_damage_hit(
                     .instruction_list
                     .push(Instruction::ChangeAbility(ChangeAbilityInstruction {
                         side_ref: *side_ref,
-                        ability_change: Abilities::MUMMY as i16 - attacking_pkmn.ability as i16,
+                        new_ability: Abilities::MUMMY,
+                        old_ability: attacking_pkmn.ability.clone(),
                     }));
                 attacking_pkmn.ability = Abilities::MUMMY;
             }
@@ -809,7 +812,8 @@ pub fn ability_after_damage_hit(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: side_ref.get_other_side(),
-                        name_change: PokemonName::CRAMORANT as i16 - defending_pkmn.id as i16,
+                        previous_forme: defending_pkmn.id,
+                        new_forme: PokemonName::CRAMORANT,
                     },
                 ));
 
@@ -823,7 +827,6 @@ pub fn ability_after_damage_hit(
                 attacking_pkmn.hp -= damage_dealt;
 
                 if defending_pkmn.id == PokemonName::CRAMORANTGULPING {
-                    defending_pkmn.id = PokemonName::CRAMORANT;
                     if let Some(boost_instruction) = get_boost_instruction(
                         &attacking_side,
                         &PokemonBoostableStat::Defense,
@@ -835,7 +838,6 @@ pub fn ability_after_damage_hit(
                         instructions.instruction_list.push(boost_instruction);
                     }
                 } else if defending_pkmn.id == PokemonName::CRAMORANTGORGING {
-                    defending_pkmn.id = PokemonName::CRAMORANT;
                     choice.add_or_create_secondaries(Secondary {
                         chance: 100.0,
                         target: MoveTarget::User,
@@ -1042,12 +1044,13 @@ pub fn ability_on_switch_out(
         return;
     }
     match active_pkmn.ability {
-        Abilities::GULPMISSILE if active_pkmn.base_ability == Abilities::GULPMISSILE => {
+        Abilities::GULPMISSILE => {
             if active_pkmn.id != PokemonName::CRAMORANT {
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::CRAMORANT as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::CRAMORANT,
+                        previous_forme: active_pkmn.id,
                     },
                 ));
                 active_pkmn.id = PokemonName::CRAMORANT;
@@ -1058,7 +1061,8 @@ pub fn ability_on_switch_out(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::PALAFINHERO as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::PALAFINHERO,
+                        previous_forme: PokemonName::PALAFIN,
                     },
                 ));
                 active_pkmn.id = PokemonName::PALAFINHERO;
@@ -1070,7 +1074,8 @@ pub fn ability_on_switch_out(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::MORPEKO as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::MORPEKO,
+                        previous_forme: PokemonName::MORPEKOHANGRY,
                     },
                 ));
                 active_pkmn.id = PokemonName::MORPEKO;
@@ -1141,9 +1146,10 @@ pub fn ability_on_switch_out(
             .instruction_list
             .push(Instruction::ChangeAbility(ChangeAbilityInstruction {
                 side_ref: *side_ref,
-                ability_change: active_pkmn.base_ability as i16 - active_pkmn.ability as i16,
+                new_ability: active_pkmn.base_ability.clone(),
+                old_ability: active_pkmn.ability.clone(),
             }));
-        active_pkmn.ability = active_pkmn.base_ability;
+        active_pkmn.ability = active_pkmn.base_ability.clone();
     }
 }
 
@@ -1163,7 +1169,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::MORPEKOHANGRY as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::MORPEKOHANGRY,
+                        previous_forme: PokemonName::MORPEKO,
                     },
                 ));
                 active_pkmn.id = PokemonName::MORPEKOHANGRY;
@@ -1171,7 +1178,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::MORPEKO as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::MORPEKO,
+                        previous_forme: PokemonName::MORPEKOHANGRY,
                     },
                 ));
                 active_pkmn.id = PokemonName::MORPEKO;
@@ -1184,7 +1192,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::MINIOR as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::MINIOR,
+                        previous_forme: active_pkmn.id,
                     },
                 ));
                 active_pkmn.id = PokemonName::MINIOR;
@@ -1195,7 +1204,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::MINIORMETEOR as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::MINIORMETEOR,
+                        previous_forme: active_pkmn.id,
                     },
                 ));
                 active_pkmn.id = PokemonName::MINIORMETEOR;
@@ -1209,7 +1219,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::WISHIWASHI as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::WISHIWASHI,
+                        previous_forme: active_pkmn.id,
                     },
                 ));
                 active_pkmn.id = PokemonName::WISHIWASHI;
@@ -1219,7 +1230,8 @@ pub fn ability_end_of_turn(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::WISHIWASHISCHOOL as i16 - active_pkmn.id as i16,
+                        new_forme: PokemonName::WISHIWASHISCHOOL,
+                        previous_forme: active_pkmn.id,
                     },
                 ));
                 active_pkmn.id = PokemonName::WISHIWASHISCHOOL;
@@ -1387,9 +1399,10 @@ pub fn ability_on_switch_in(
             .instruction_list
             .push(Instruction::ChangeAbility(ChangeAbilityInstruction {
                 side_ref: *side_ref,
-                ability_change: defending_pkmn.ability as i16 - active_pkmn.ability as i16,
+                new_ability: defending_pkmn.ability.clone(),
+                old_ability: active_pkmn.ability.clone(),
             }));
-        active_pkmn.ability = defending_pkmn.ability;
+        active_pkmn.ability = defending_pkmn.ability.clone();
     }
 
     match active_pkmn.ability {
@@ -1401,7 +1414,8 @@ pub fn ability_on_switch_in(
                 instructions.instruction_list.push(Instruction::FormeChange(
                     FormeChangeInstruction {
                         side_ref: *side_ref,
-                        name_change: PokemonName::EISCUE as i16 - active_pkmn.id as i16,
+                        previous_forme: active_pkmn.id,
+                        new_forme: PokemonName::EISCUE,
                     },
                 ));
                 active_pkmn.id = PokemonName::EISCUE;
@@ -1492,6 +1506,9 @@ pub fn ability_on_switch_in(
                 }));
         }
         Abilities::SLOWSTART => {
+            attacking_side
+                .volatile_statuses
+                .insert(PokemonVolatileStatus::SLOWSTART);
             instructions
                 .instruction_list
                 .push(Instruction::ApplyVolatileStatus(
@@ -1500,19 +1517,6 @@ pub fn ability_on_switch_in(
                         volatile_status: PokemonVolatileStatus::SLOWSTART,
                     },
                 ));
-            instructions
-                .instruction_list
-                .push(Instruction::ChangeVolatileStatusDuration(
-                    ChangeVolatileStatusDurationInstruction {
-                        side_ref: *side_ref,
-                        volatile_status: PokemonVolatileStatus::SLOWSTART,
-                        amount: 6 - attacking_side.volatile_status_durations.slowstart,
-                    },
-                ));
-            attacking_side
-                .volatile_statuses
-                .insert(PokemonVolatileStatus::SLOWSTART);
-            attacking_side.volatile_status_durations.slowstart = 6;
         }
         Abilities::DROUGHT | Abilities::ORICHALCUMPULSE => {
             if state.weather.weather_type != Weather::SUN {
@@ -2247,9 +2251,7 @@ pub fn ability_modify_attack_against(
     let (attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     let attacking_pkmn = attacking_side.get_active_immutable();
     let target_pkmn = defending_side.get_active_immutable();
-    if target_pkmn.ability == Abilities::NEUTRALIZINGGAS
-        || attacker_choice.target == MoveTarget::User
-    {
+    if target_pkmn.ability == Abilities::NEUTRALIZINGGAS {
         return;
     }
     if (attacking_pkmn.ability == Abilities::MOLDBREAKER
