@@ -1,5 +1,158 @@
 # Changelog
 
+## [v0.0.42](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.42) - 2025-04-21
+
+### Features
+
+- Gen1/gen2 have minimum score for pkmn - ([5a8d784](https://github.com/pmariglia/poke-engine/commit/5a8d78405d36c0f5fc24c7a9b737add24102f17f))
+
+- Gen3 spikes scaling in eval - ([30846bc](https://github.com/pmariglia/poke-engine/commit/30846bc5ce7dbc02d56916946d1b2a895bbbb9f7))
+
+- Chestoberry - ([f31dd11](https://github.com/pmariglia/poke-engine/commit/f31dd11e47d05fca9de9d39db5ad25aadaf3148b))
+
+- Taunt durations - ([c5cccd9](https://github.com/pmariglia/poke-engine/commit/c5cccd98bad69d8f287e5a0fd92343d03422408b))
+
+
+### Bug Fixes
+
+- Remove duplicated logic - ([48bd679](https://github.com/pmariglia/poke-engine/commit/48bd67979b36cd6baef79505881f5d1f008db0df))
+
+- Only create empty moves while < 4 - ([95d744a](https://github.com/pmariglia/poke-engine/commit/95d744a3ac8703c391399fc2cb99f1769e4c2da9))
+
+- Gulpmissile only reverts you to cramorant if gulpmissile is your base ability - ([f7cf660](https://github.com/pmariglia/poke-engine/commit/f7cf6609506519548fd5d03e68269397a1041578))
+
+- Gen3 pinch berries only activate at end of turn - ([288008a](https://github.com/pmariglia/poke-engine/commit/288008a3614cc8c2e7efe7efc477acf92eee36de))
+
+- Gen3 move cannot be used without a target - ([ecc051c](https://github.com/pmariglia/poke-engine/commit/ecc051cfb480e4fd83124da5e13e7f1fe12586ca))
+
+- Gen3 abilities default to none if not present - ([b6cf5c4](https://github.com/pmariglia/poke-engine/commit/b6cf5c46993917f43223edd9576ab810b151b524))
+
+- Pprint stats in debug output - ([ad59bc0](https://github.com/pmariglia/poke-engine/commit/ad59bc05ae77bbdde6716608d97dd1ad819f7635))
+
+
+### Miscellaneous Tasks
+
+- Additional gen3 tests - ([e1de524](https://github.com/pmariglia/poke-engine/commit/e1de524e68d9b2027e3dec9f392a31c481a3ff92))
+
+
+### Misc
+
+- Test for gen3 intimidate vs clearbody - ([a39758e](https://github.com/pmariglia/poke-engine/commit/a39758e92f003e3ac9d66daef9f6beed0985365c))
+
+
+### Refactor
+
+- Pretty-print functions go in the state file - ([ffc2a0d](https://github.com/pmariglia/poke-engine/commit/ffc2a0d5ee2badc601323645488ed5be247d6ad0))
+
+- Remove MoveTera enum variant from gen1/gen2 - ([9d2c18c](https://github.com/pmariglia/poke-engine/commit/9d2c18c1ff8fc5f98bf722a96b247e2c12e319df))
+
+- Remove can_tera function from gen1/gen2 - ([2ebabea](https://github.com/pmariglia/poke-engine/commit/2ebabeaab9cb3ed165c190a0ad08c88092026367))
+
+- Reduce Instruction enum from 8 to 6 bytes - ([0f3294d](https://github.com/pmariglia/poke-engine/commit/0f3294dcb23d9dc92385f4f8a6595f502d8152db))
+
+- Change vector starting capacities - ([149fb32](https://github.com/pmariglia/poke-engine/commit/149fb3268d57443540c409804f6e026053a68db0))
+
+- Generation specific things are always in a sub module - ([3917131](https://github.com/pmariglia/poke-engine/commit/3917131cefaa35bae42c29d420dd76448ca8168e))
+
+- Split out gen3 into its own module - ([ee74388](https://github.com/pmariglia/poke-engine/commit/ee743889d96a8e9549a83269efb8bf3acc83830e))
+
+- Move state structs and common functions to top level - ([663aa18](https://github.com/pmariglia/poke-engine/commit/663aa1830680bee4bad21eeefbca878128d8a951))
+
+- Move more out of state.rs into common - ([89eb7c6](https://github.com/pmariglia/poke-engine/commit/89eb7c63dabfa5325b30e995d66beece5e6a328f))
+
+## [v0.0.41](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.41) - 2025-04-11
+
+### Bug Fixes
+
+- Gen1 and gen2 also return crit damages - ([18e2370](https://github.com/pmariglia/poke-engine/commit/18e23706ae2706488e89d73ba84313ff4a187cc6))
+
+- Add some more information to text debugger - ([12d72d3](https://github.com/pmariglia/poke-engine/commit/12d72d3a3accb6994acd9e065e123dea04178f82))
+
+## [v0.0.40](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.40) - 2025-04-06
+
+### Features
+
+- Healing Wish - ([5fd1014](https://github.com/pmariglia/poke-engine/commit/5fd101422df8df6153777b162fe2166e3217c6a6))
+
+- [**breaking**] SlowStart - ([1194b15](https://github.com/pmariglia/poke-engine/commit/1194b157523e7b2c7278e20bbb4508b6d819ebbe))
+
+## [v0.0.39](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.39) - 2025-04-05
+
+### Features
+
+- Poison and toxic are conditional in evaluation fn - ([ca7dd56](https://github.com/pmariglia/poke-engine/commit/ca7dd567321ece048bbc814ed0a7c2b2198fd185))
+
+
+### Bug Fixes
+
+- Protosynthesis and Quarkdrive dissipate when weather/field ends - ([9e95564](https://github.com/pmariglia/poke-engine/commit/9e95564b4c60bdf40a885368b84f225d5d5f1a85))
+
+- Undo paralysis evaluation being based on speed - ([1b0a889](https://github.com/pmariglia/poke-engine/commit/1b0a889c3233cfe19231749628964295498cf2c3))
+
+
+### Refactor
+
+- [**breaking**] Yawn uses VolatileStatusDurations - ([fc79e9f](https://github.com/pmariglia/poke-engine/commit/fc79e9f862905cc66077a46f9739b96c0d7284a0))
+
+## [v0.0.38](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.38) - 2025-04-01
+
+### Features
+
+- Evaluation Fn additions (gen3+). - ([c044fef](https://github.com/pmariglia/poke-engine/commit/c044fef3857ecb561550fb211e4e6817ca2fe2cb))
+
+- Powertrip - ([d89aa45](https://github.com/pmariglia/poke-engine/commit/d89aa45ebfa714cb4fd9c62506c036e2ae543940))
+
+
+### Bug Fixes
+
+- Charge moves are forced when charging - ([56b8725](https://github.com/pmariglia/poke-engine/commit/56b872580467900ed7b5c94e41daa05b7d36545a))
+
+
+### Refactor
+
+- Damage calc returns crit damage as well - ([1f7fa6d](https://github.com/pmariglia/poke-engine/commit/1f7fa6dcaad3faaa5e1fb50cd30baf853219c37c))
+
+## [v0.0.37](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.37) - 2025-03-30
+
+### Features
+
+- Solarblade does not charge in sun - ([10f6dc3](https://github.com/pmariglia/poke-engine/commit/10f6dc371f8e5261d7b94b94c816fcf87063963a))
+
+
+### Bug Fixes
+
+- Toxic count is removed when toxic is removed - ([283ec60](https://github.com/pmariglia/poke-engine/commit/283ec60d12b097ce302e11123f2b7584de8178c3))
+
+## [v0.0.36](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.36) - 2025-03-20
+
+### Bug Fixes
+
+- Terastallized defender always takes 2x from stellar move - ([877b1fc](https://github.com/pmariglia/poke-engine/commit/877b1fc8e8d8807c836fa6fa456a2f07b883f871))
+
+- Terablast stellar reduces offensive stats - ([a59857f](https://github.com/pmariglia/poke-engine/commit/a59857fe8264304ede821b430d2345ad255a7313))
+
+- Decouple terastallization from gen9 - ([ae35600](https://github.com/pmariglia/poke-engine/commit/ae356001fea6af328b9fee379f66a80ce88af27f))
+
+## [v0.0.35](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.35) - 2025-03-11
+
+### Features
+
+- Encore durations tracking - ([e24af0a](https://github.com/pmariglia/poke-engine/commit/e24af0a6006cb787c11d3c2d1b5e28b12947954e))
+
+
+### Bug Fixes
+
+- Dont evaluate volatiles/boosts if active is dead. put base_ability in gen1/gen2 - ([56475d5](https://github.com/pmariglia/poke-engine/commit/56475d5b417a8643a1f505a131daee3179dd23cd))
+
+- Abilities that cancel opponent actions only work if move targets the opponent - ([62cba0d](https://github.com/pmariglia/poke-engine/commit/62cba0d9670bde24139e9be0fb9abdccf1da5acc))
+
+- Airballoon only pops when hit by non-status move targetting the holder - ([97753d3](https://github.com/pmariglia/poke-engine/commit/97753d3d11cc9e4064b59f3a818abdf5a11abb15))
+
+
+### Miscellaneous Tasks
+
+- Remove unrevealed pkmn logic - ([ba5a3d5](https://github.com/pmariglia/poke-engine/commit/ba5a3d5a78d19870f7126d717a4284eb26d878c8))
+
 ## [v0.0.34](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.34) - 2025-03-08
 
 ### Features
